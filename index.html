@@ -1465,7 +1465,17 @@ function stackBars(el, o) {
 })();
 
 if ('serviceWorker' in navigator && /^https:|^http:\/\/localhost/.test(location.href) && !window.MOCK) {
-  window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  window.addEventListener('load', function () {
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) { reg.update().catch(function () {}); }).catch(function () {});
+    // A new version took over while the app is open: reload once onto it.
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      if (!document.querySelector('dialog[open]')) location.reload(); else toast('App updated - reopen to use the new version');
+    });
+  });
 }
 load();
 </script>
