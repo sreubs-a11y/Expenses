@@ -4,7 +4,7 @@
  * When you upload a new version to GitHub, it's picked up in the background and used from the next open.
  * Bump VERSION when you change any file, so old copies are cleared.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'bills-app-' + VERSION;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 

@@ -210,7 +210,8 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 
   <section id="v-overview">
     <div class="card">
-      <h2>Projected bills-account balance</h2>
+      <div class="row" style="margin-bottom:2px;justify-content:space-between"><h2 style="margin:0">Projected bills-account balance</h2>
+        <div class="seg small" id="fcMode"><button data-m="week">Weekly</button><button data-m="day">Daily</button></div></div>
       <p class="sub" id="fcSub"></p>
       <div class="chart" id="fcChart"></div>
     </div>
@@ -612,7 +613,14 @@ function renderOverview() {
     ' · dashed line is the ' + money(s.lowBalance, false) + ' alert.';
   var byDay = {};
   f.upcoming.forEach(function (u) { (byDay[u.date] = byDay[u.date] || []).push(u); });
-  lineChart(document.getElementById('fcChart'), {
+  var mode = 'week'; try { mode = localStorage.getItem('fcMode') || 'week'; } catch (e) {}
+  document.querySelectorAll('#fcMode button').forEach(function (b) { b.classList.toggle('on', b.dataset.m === mode); });
+  if (mode === 'week') {
+    bandChart(document.getElementById('fcChart'), {
+      buckets: weekBuckets(f.series, byDay), height: 240, color: 'var(--accent)', ref: s.lowBalance, refLabel: 'Alert ' + money(s.lowBalance, false),
+      yfmt: function (v) { return money(v, false); }, low: s.lowBalance
+    });
+  } else lineChart(document.getElementById('fcChart'), {
     points: f.series.map(function (p) { return { x: pd(p[0]), y: p[1], key: p[0] }; }),
     step: true, height: 240, color: 'var(--accent)', ref: s.lowBalance, refLabel: 'Alert ' + money(s.lowBalance, false),
     yfmt: function (v) { return money(v, false); }, todayX: pd(today),
@@ -1008,6 +1016,99 @@ function bars(el, o) {
   svg.addEventListener('mouseleave', function () { tip.style.display = 'none'; svg.querySelectorAll('.hb').forEach(function (h) { h.setAttribute('fill', 'transparent'); }); });
 }
 var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { if (state.app === 'car') window.carRerender(); else if (D) renderView(state.view); }, 200); });
+
+document.getElementById('fcMode').addEventListener('click', function (e) {
+  var b = e.target.closest('button'); if (!b) return;
+  try { localStorage.setItem('fcMode', b.dataset.m); } catch (err) {}
+  renderOverview();
+});
+
+/** Groups a daily balance series into 7-day buckets, keeping each bucket's exact low and high (and when they happen). */
+function weekBuckets(series, byDay) {
+  var out = [];
+  for (var i = 0; i < series.length; i += 7) {
+    var chunk = series.slice(i, i + 7), lo = chunk[0], hi = chunk[0], items = [];
+    chunk.forEach(function (p) { if (p[1] < lo[1]) lo = p; if (p[1] > hi[1]) hi = p; (byDay[p[0]] || []).forEach(function (u) { items.push(u); }); });
+    out.push({ from: chunk[0][0], to: chunk[chunk.length - 1][0], lo: lo[1], loDate: lo[0], hi: hi[1], hiDate: hi[0], items: items });
+  }
+  return out;
+}
+
+/** Smooth path through points that never overshoots them (monotone cubic), so lows and highs stay exact. */
+function monotonePath(pts) {
+  var n = pts.length; if (!n) return ''; if (n === 1) return 'M' + pts[0][0] + ' ' + pts[0][1];
+  var dx = [], m = [], t = [];
+  for (var i = 0; i < n - 1; i++) { dx[i] = pts[i + 1][0] - pts[i][0]; m[i] = (pts[i + 1][1] - pts[i][1]) / (dx[i] || 1); }
+  t[0] = m[0]; t[n - 1] = m[n - 2];
+  for (i = 1; i < n - 1; i++) t[i] = m[i - 1] * m[i] <= 0 ? 0 : 3 * (dx[i - 1] + dx[i]) / ((2 * dx[i] + dx[i - 1]) / m[i - 1] + (dx[i] + 2 * dx[i - 1]) / m[i]);
+  var d = 'M' + pts[0][0] + ' ' + pts[0][1];
+  for (i = 0; i < n - 1; i++) {
+    var h = dx[i] / 3;
+    d += 'C' + (pts[i][0] + h) + ' ' + (pts[i][1] + h * t[i]) + ' ' + (pts[i + 1][0] - h) + ' ' + (pts[i + 1][1] - h * t[i + 1]) + ' ' + pts[i + 1][0] + ' ' + pts[i + 1][1];
+  }
+  return d;
+}
+
+/**
+ * Weekly range chart: a smooth line through each week's lowest balance, a light band up to that week's highest,
+ * and labelled markers on the overall low and high. Each point sits on the day it actually happens.
+ */
+function bandChart(el, o) {
+  var W = Math.max(280, el.clientWidth || 600), H = o.height || 220, L = 56, R = 12, T = 18, B = 24, bk = o.buckets;
+  if (!bk.length) { el.innerHTML = '<div class="empty">No data</div>'; return; }
+  var ys = []; bk.forEach(function (b) { ys.push(b.lo, b.hi); }); if (o.ref !== undefined) ys.push(o.ref);
+  var ticks = niceTicks(Math.min.apply(null, ys), Math.max.apply(null, ys), 4), y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  var x0 = +pd(bk[0].from), x1 = +pd(bk[bk.length - 1].to); if (x0 === x1) x1 = x0 + 864e5;
+  function X(v) { return L + (v - x0) / (x1 - x0) * (W - L - R); }
+  function Y(v) { return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B); }
+  var loPts = bk.map(function (b) { return [X(+pd(b.loDate)), Y(b.lo)]; });
+  var hiPts = bk.map(function (b) { return [X(+pd(b.hiDate)), Y(b.hi)]; });
+  // keep x strictly increasing for the curves
+  function inc(a) { for (var i = 1; i < a.length; i++) if (a[i][0] <= a[i - 1][0]) a[i][0] = a[i - 1][0] + 0.5; return a; }
+  inc(loPts); inc(hiPts);
+  var s = svgEl(W, H) + '<g class="axis">';
+  ticks.forEach(function (t) { s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(t) + '" y2="' + Y(t) + '" stroke="' + (t === 0 ? 'var(--axis)' : 'var(--grid)') + '"/><text x="' + (L - 8) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + o.yfmt(t) + '</text>'; });
+  timeTicks(x0, x1).forEach(function (t) { s += '<text x="' + X(+t.x) + '" y="' + (H - 6) + '" text-anchor="middle">' + t.l + '</text>'; });
+  s += '</g>';
+  if (o.ref !== undefined && o.ref > y0) s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(o.ref) + '" y2="' + Y(o.ref) + '" stroke="var(--critical)" stroke-width="1.5" stroke-dasharray="5 4"/><text x="' + (W - R) + '" y="' + (Y(o.ref) - 5) + '" text-anchor="end" fill="var(--ink2)" font-size="11">' + esc(o.refLabel || '') + '</text>';
+  var top = monotonePath(hiPts), bottom = monotonePath(loPts.slice().reverse());
+  s += '<path d="' + top + 'L' + loPts[loPts.length - 1][0] + ' ' + loPts[loPts.length - 1][1] + bottom.replace(/^M[^C]*/, '') + 'Z" fill="' + o.color + '" fill-opacity="0.14" stroke="none"/>';
+  s += '<path d="' + top + '" fill="none" stroke="' + o.color + '" stroke-opacity="0.35" stroke-width="1"/>';
+  s += '<path d="' + monotonePath(loPts) + '" fill="none" stroke="' + o.color + '" stroke-width="2" stroke-linecap="round"/>';
+  // overall low / high markers with labels
+  var li = 0, hj = 0; bk.forEach(function (b, i) { if (b.lo < bk[li].lo) li = i; if (b.hi > bk[hj].hi) hj = i; });
+  function mark(px, py, txt, below, warn) {
+    var anchor = px > W - 90 ? 'end' : px < L + 60 ? 'start' : 'middle';
+    return '<circle cx="' + px + '" cy="' + py + '" r="4.5" fill="' + (warn ? 'var(--critical)' : o.color) + '" stroke="var(--card)" stroke-width="2"/>' +
+      '<text x="' + px + '" y="' + (below ? py + 16 : py - 9) + '" text-anchor="' + anchor + '" font-size="11" font-weight="600" fill="var(--ink)">' + txt + '</text>';
+  }
+  s += mark(loPts[li][0], loPts[li][1], 'Low ' + money(bk[li].lo, false) + ' · ' + fdate(bk[li].loDate), loPts[li][1] < H - B - 22, o.low !== undefined && bk[li].lo < o.low);
+  s += mark(hiPts[hj][0], hiPts[hj][1], 'High ' + money(bk[hj].hi, false), false, false);
+  s += '<line class="xh" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-width="1" style="display:none"/><circle class="hd" r="5" fill="' + o.color + '" stroke="var(--card)" stroke-width="2" style="display:none"/>';
+  s += '</svg><div class="tip"></div>';
+  el.innerHTML = s;
+  var svg = el.querySelector('svg'), tip = el.querySelector('.tip'), xh = el.querySelector('.xh'), hd = el.querySelector('.hd');
+  function move(ev) {
+    var r = svg.getBoundingClientRect(), cx = ((ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left) * W / r.width, i = 0;
+    bk.forEach(function (b, k) { var mid = (X(+pd(b.from)) + X(+pd(b.to))) / 2, bm = (X(+pd(bk[i].from)) + X(+pd(bk[i].to))) / 2; if (Math.abs(mid - cx) < Math.abs(bm - cx)) i = k; });
+    var b = bk[i], px = loPts[i][0], py = loPts[i][1];
+    xh.setAttribute('x1', px); xh.setAttribute('x2', px); xh.style.display = ''; hd.setAttribute('cx', px); hd.setAttribute('cy', py); hd.style.display = '';
+    var big = b.items.slice().sort(function (a, c) { return Math.abs(c.amount) - Math.abs(a.amount); });
+    tip.innerHTML = '<div class="muted">' + fdate(b.from) + ' – ' + fdate(b.to) + '</div>' +
+      '<div class="li"><span>Low</span><span><b>' + money(b.lo) + '</b> · ' + fdate(b.loDate) + '</span></div>' +
+      '<div class="li"><span>High</span><span>' + money(b.hi) + ' · ' + fdate(b.hiDate) + '</span></div>' +
+      (big.length ? '<div style="border-top:1px solid var(--grid);margin:5px 0 3px"></div>' : '') +
+      big.slice(0, 6).map(function (u) { return '<div class="li"><span>' + esc(u.name) + '</span><span>' + money(u.amount) + '</span></div>'; }).join('') +
+      (big.length > 6 ? '<div class="muted">+' + (big.length - 6) + ' more</div>' : '');
+    tip.style.display = 'block';
+    var sx = px * r.width / W, tw = tip.offsetWidth;
+    tip.style.left = Math.min(Math.max(0, sx + 12 + tw > r.width ? sx - tw - 12 : sx + 12), r.width - tw) + 'px';
+    tip.style.top = '0px';
+  }
+  function leave() { tip.style.display = 'none'; xh.style.display = 'none'; hd.style.display = 'none'; }
+  svg.addEventListener('mousemove', move); svg.addEventListener('touchstart', move, { passive: true }); svg.addEventListener('touchmove', move, { passive: true });
+  svg.addEventListener('mouseleave', leave); svg.addEventListener('touchend', function () { setTimeout(leave, 1500); });
+}
 
 /** Stacked bars. o: {cats, series:[{name,color,values}], height, yfmt, tipv, label(i), title(i)} */
 function stackBars(el, o) {
