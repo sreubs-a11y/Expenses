@@ -1,0 +1,8 @@
+Date,Description,Credit,Debit,Balance
+18/11/2026,"Internal Transfer - Receipt 1004 - From Everyday Test  ",250.00,,2000.00
+11/11/2026,"Internal Transfer - Receipt 1003 - From Everyday Test  ",250.00,,1750.00
+04/11/2026,"Internal Transfer - Receipt 1002 - From Everyday Test  ",250.00,,1500.00
+31/10/2026,Interest Credit,0.01,,1250.00
+28/10/2026,"Internal Transfer - Receipt 1001 - From Everyday Test  ",250.00,,1249.99
+21/10/2026,"Internal Transfer - Receipt 900 - To Everyday Test  ",,-500.00,999.99
+21/10/2026,"Internal Transfer - Receipt 1000 - From Everyday Test  ",250.00,,1499.99

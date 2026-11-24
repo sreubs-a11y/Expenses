@@ -1,0 +1,39 @@
+{
+ "Fuel": [
+  [
+   "Date",
+   "Litres",
+   "Price",
+   "Total",
+   "Odometer",
+   "KM",
+   "L/100km",
+   "Notes",
+   "Receipts"
+  ]
+ ],
+ "Tolls": [
+  [
+   "Date From",
+   "Date To",
+   "Total ($)",
+   "Comment",
+   "Receipt"
+  ]
+ ],
+ "Other": [
+  [
+   "Date",
+   "Item",
+   "Total",
+   "Comment",
+   "Receipt"
+  ]
+ ],
+ "Allowances": [
+  [
+   "%",
+   1
+  ]
+ ]
+}

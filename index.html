@@ -117,6 +117,14 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 .seg button.on { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 .seg.small button { padding: 4px 10px; font-size: 13px; }
 .grid2.flat > div { min-width: 0; }
+.frules td { font-size: 13px; }
+.filters { margin-bottom: 6px; }
+@media (max-width: 600px) {
+  .frules thead { display: none; } .frules tr { display: block; border-bottom: 1px solid var(--grid); padding: 8px 0; }
+  .frules td { display: block; border: 0; padding: 2px 0; } .frules td.num { text-align: left; }
+  .filters input[type=search] { flex-basis: 100% !important; } .filters select { flex: 1 1 140px; min-width: 120px; }
+  .filters .spacer { display: none; } .filters .btn.primary { flex: 1 1 100%; }
+}
 /* ---------- car section (scoped) ---------- */
 .app-switch { margin-right: 4px; }
 .app-switch button { padding: 5px 14px; font-weight: 600; }
@@ -182,21 +190,22 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 <body>
 <header>
   <div class="bar"><h1 id="appTitle">Bills</h1>
-    <div class="seg app-switch" id="appSw" style="display:none"><button data-a="bills" class="on">Bills</button><button data-a="car">Car</button></div>
+    <div class="seg app-switch" id="appSw" style="display:none"><button data-a="bills" class="on">Bills</button><button data-a="holiday">Holiday</button><button data-a="car">Car</button></div>
     <span class="spacer"></span>
     <span class="sync" id="sync" role="status" aria-live="polite"></span>
     <button class="btn small" id="refreshBtn" title="Refresh from the sheets" aria-label="Refresh" onclick="refreshAll()">↻</button>
     <button class="btn small" id="connBtn" title="Connection" aria-label="Connection settings" onclick="openConnect()">⚙</button>
     <span class="muted bills-only" id="asof"></span>
-    <button class="btn small bills-only" onclick="openBill()">+ Add bill</button>
+    <button class="btn small bills-only has-bills" onclick="openBill()">+ Add bill</button>
     <a class="btn small bills-only" id="sheetLink" target="_blank" style="text-decoration:none;border:1px solid var(--axis);border-radius:8px;padding:2px 8px;font-size:12px;color:var(--ink)">Open sheet</a>
   </div>
   <nav id="nav">
     <button data-v="overview" class="on">Overview</button>
     <button data-v="upcoming">Upcoming</button>
-    <button data-v="bills">Utilities</button>
-    <button data-v="usage">Usage</button>
+    <button data-v="bills" class="has-bills">Utilities</button>
+    <button data-v="usage" class="has-bills">Usage</button>
     <button data-v="reconcile">Reconcile<span class="count" id="attnCount" style="display:none"></span></button>
+    <button data-v="rules">Rules</button>
   </nav>
   <nav id="carNav" style="display:none">
     <button data-cv="dash" class="on">Dashboard</button>
@@ -210,7 +219,7 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 
   <section id="v-overview">
     <div class="card">
-      <div class="row" style="margin-bottom:2px;justify-content:space-between"><h2 style="margin:0">Projected bills-account balance</h2>
+      <div class="row" style="margin-bottom:2px;justify-content:space-between"><h2 style="margin:0" id="fcTitle">Projected bills-account balance</h2>
         <div class="seg small" id="fcMode"><button data-m="week">Weekly</button><button data-m="day">Daily</button></div></div>
       <p class="sub" id="fcSub"></p>
       <div class="legend" id="fcLegend"><span><span class="dot" style="background:var(--ink2)"></span>Actual (bank)</span><span><span class="dot" style="background:var(--accent)"></span>Forecast</span><span><span style="display:inline-block;width:0;height:11px;border-left:1.5px dashed var(--ink2);margin-right:6px;vertical-align:-1px"></span>Last import</span></div>
@@ -224,9 +233,32 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 
   <section id="v-upcoming">
     <div class="card">
+      <div class="row filters">
+        <input type="search" id="upQ" placeholder="Search items, notes, bank text…" aria-label="Search" style="flex:1;min-width:180px">
+        <select id="upWhen" aria-label="When">
+          <option value="all">Ahead + past</option><option value="ahead">Ahead only</option><option value="30">Next 30 days</option><option value="90">Next 3 months</option><option value="past">Past only</option>
+        </select>
+        <select id="upItem" aria-label="Item"><option value="">All items</option></select>
+        <select id="upKind" aria-label="Kind">
+          <option value="">Everything</option><option value="out">Money out</option><option value="in">Money in</option>
+          <option value="overdue">Overdue</option><option value="estimate">Estimates</option><option value="bill">Real bills</option>
+          <option value="diff">Paid a different amount</option><option value="unmatched">Not matched / one-off</option>
+        </select>
+        <button class="btn small" id="upClear" onclick="clearUpFilters()" style="display:none">Clear</button>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn primary" onclick="openItem()">+ Add item</button>
+      </div>
+      <div class="muted" id="upSummary" style="margin-bottom:6px"></div>
+    </div>
+    <div class="card" id="upAheadCard">
       <h2>Everything ahead</h2>
       <p class="sub">Running balance assumes each item goes out on its date. <span class="tag">bill</span> = real bill entered, <span class="tag">est.</span> = estimated from your bill history.</p>
       <div class="scroll" id="upcomingTable"></div>
+    </div>
+    <div class="card" id="upPastCard">
+      <h2>Past actuals</h2>
+      <p class="sub">What actually went through the bank since the opening date, newest first, against what was expected. Balance is the bank's balance after that transaction.</p>
+      <div class="scroll" id="pastTable"></div>
     </div>
   </section>
 
@@ -266,7 +298,7 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
   <section id="v-reconcile">
     <div class="card">
       <h2>Import from your bank</h2>
-      <p class="sub">Download a CSV of your bills account from internet banking and choose it here. Duplicates are skipped and matching runs automatically.</p>
+      <p class="sub">Download a CSV of your <b id="impAcct">bills</b> account from internet banking and choose it here. Duplicates are skipped and matching runs automatically.</p>
       <div class="row"><input type="file" id="csvFile" accept=".csv,text/csv"><button class="btn primary" id="csvBtn" onclick="importCsv()">Import</button></div>
       <div id="importResult" class="muted"></div>
     </div>
@@ -284,6 +316,17 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
       <h2>Recent transactions</h2>
       <p class="sub">How each was matched: <span class="how">text</span> by its rules, <span class="how amount">amount</span> by exact amount and date only, worth a glance, <span class="how">manual</span> by you. Undo puts it back in the list; undoing a manual match also forgets what it learned.</p>
       <div class="scroll" id="recentTable"></div>
+    </div>
+  </section>
+
+  <section id="v-rules">
+    <div class="card">
+      <h2>Forecast rules</h2>
+      <p class="sub" id="fRulesSub"></p>
+      <div class="row" style="margin-bottom:8px"><input type="search" id="ruQ" placeholder="Search rules…" aria-label="Search rules" style="flex:1;min-width:160px">
+        <label class="muted"><input type="checkbox" id="ruInactive"> Show inactive</label>
+        <button class="btn small" onclick="openItem()">+ Add item</button></div>
+      <div class="scroll" id="fRulesTable"></div>
     </div>
     <div class="card">
       <div class="row" style="margin-bottom:4px"><h2 style="flex:1">Matching rules</h2><button class="btn small" onclick="runMatching()">Run matching again</button></div>
@@ -414,6 +457,25 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
     <div class="actions"><button class="btn" type="button" onclick="billDlg.close()">Cancel</button><button class="btn primary" type="button" id="billSave" onclick="saveBill()">Save bill</button></div>
   </form>
 </dialog>
+<dialog id="itemDlg">
+  <form method="dialog" onsubmit="return false">
+    <h2>Add to the <span id="itemAcct">bills</span> forecast</h2>
+    <p class="sub" style="color:var(--ink2);font-size:13px;margin:-6px 0 12px">Adds a row to the account's Recurring tab. Use <b>Once</b> for a payment on a set date.</p>
+    <div class="fgrid">
+      <label class="full">Name<input name="name" required placeholder="e.g. Flights, Accommodation deposit"></label>
+      <label>Direction<select name="dir"><option value="-1">Money out</option><option value="1">Money in</option></select></label>
+      <label>Amount ($)<input name="amount" type="number" step="0.01" min="0.01" inputmode="decimal" required></label>
+      <label>Frequency<select name="frequency"><option>Once</option><option>Weekly</option><option>Fortnightly</option><option>Monthly</option><option>Two-monthly</option><option>Quarterly</option><option>Six-monthly</option><option>Annual</option></select></label>
+      <label>Date (first one)<input name="date" type="date" required></label>
+      <label class="rep">End date<input name="end" type="date"></label>
+      <label class="rep">&nbsp;<span class="muted" style="font-size:12px">Blank = no end</span></label>
+      <label class="full">Bank text to match<input name="matchText" list="matchList" placeholder="Words in the bank description (blank = the name)" autocapitalize="characters"></label>
+      <label class="full">Notes<input name="notes"></label>
+    </div>
+    <div class="actions"><button class="btn" type="button" onclick="itemDlg.close()">Cancel</button><button class="btn primary" type="button" id="itemSave" onclick="saveItem()">Add</button></div>
+  </form>
+</dialog>
+<datalist id="matchList"></datalist>
 <datalist id="typeList"></datalist><datalist id="billerList"></datalist><datalist id="unitList"></datalist>
 <input type="file" id="attachInput" accept="application/pdf,image/*" style="display:none">
 <dialog id="connDlg">
@@ -436,7 +498,7 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 <div id="toast"></div>
 
 <script>
-var D = null, state = { view: 'overview' };
+var D = null, state = { view: 'overview', acct: (function () { try { return localStorage.getItem('app') === 'holiday' ? 'holiday' : 'bills'; } catch (e) { return 'bills'; } })() };
 var TYPE_VAR = { Electricity: '--s-elec', Gas: '--s-gas', Water: '--s-water', Sewer: '--s-sewer' };
 var TYPE_ORDER = ['Electricity', 'Gas', 'Water', 'Sewer'];
 
@@ -449,6 +511,9 @@ var STORE = {
   set: function (k, d) { try { localStorage.setItem(k, JSON.stringify({ t: Date.now(), d: d })); } catch (e) {} }
 };
 var BILLS_KEY = 'bills-cache:v1', FRESH = null, CAR_FRESH = null;
+/* Each bank account (Bills, Holiday) keeps its own saved copy. */
+function cacheKey(a) { return a === 'holiday' ? 'holiday-cache:v1' : BILLS_KEY; }
+function forgetCaches() { try { localStorage.removeItem(BILLS_KEY); localStorage.removeItem('holiday-cache:v1'); localStorage.removeItem('car-cache:v1'); } catch (e) {} }
 var READS_ = { getDashboardData: 1, carGetData: 1 };
 var SYNC = { pending: 0, failedAt: null };
 function syncBegin() { SYNC.pending++; SYNC.failedAt = null; showSync(); }
@@ -482,9 +547,9 @@ function call(fn) {
 var CONN_KEY = 'conn:v1';
 function getConn() { try { return JSON.parse(localStorage.getItem(CONN_KEY) || 'null'); } catch (e) { return null; } }
 function setConn(c) { try { if (c) localStorage.setItem(CONN_KEY, JSON.stringify(c)); else localStorage.removeItem(CONN_KEY); } catch (e) {} }
-function apiPost(conn, fn, args) {
+function apiPost(conn, fn, args, account) {
   return fetch(conn.url, { method: 'POST', redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                           body: JSON.stringify({ key: conn.key, fn: fn, args: args || [] }) })
+                           body: JSON.stringify({ key: conn.key, fn: fn, args: args || [], account: account || 'bills' }) })
     .then(function (r) {
       if (!r.ok) throw new Error('The script replied with an error (' + r.status + ').');
       return r.text();
@@ -496,10 +561,11 @@ function apiPost(conn, fn, args) {
     }, function (e) { if (e && e.code) throw e; var n = new Error(navigator.onLine === false ? 'You\'re offline.' : (e && e.message) || 'Couldn\'t reach the script.'); n.code = n.code || 'NETWORK'; throw n; });
 }
 function callRaw(fn, args) {
-  if (window.MOCK) return Promise.resolve().then(function () { return window.MOCK(fn, args); });
+  var account = /^car/.test(fn) ? 'bills' : state.acct;   // car data lives with the bills account
+  if (window.MOCK) return Promise.resolve().then(function () { return window.MOCK(fn, args, account); });
   var conn = getConn();
   if (!conn) { var e = new Error('Not connected yet.'); e.code = 'NOT_CONNECTED'; openConnect(); return Promise.reject(e); }
-  return apiPost(conn, fn, args).catch(function (e) { if (e.code === 'AUTH') openConnect('That key wasn\'t accepted - it may have been changed. Paste the current one.'); throw e; });
+  return apiPost(conn, fn, args, account).catch(function (e) { if (e.code === 'AUTH') openConnect('That key wasn\'t accepted - it may have been changed. Paste the current one.'); throw e; });
 }
 
 var connDlg = document.getElementById('connDlg');
@@ -517,11 +583,11 @@ function saveConnect() {
   if (!/^https:\/\/script\.google(usercontent)?\.com\/.+\/exec(\?.*)?$/.test(url)) { msg.textContent = 'The script URL should start with https://script.google.com/ and end in /exec.'; return; }
   if (key.length < 20) { msg.textContent = 'That key looks too short.'; return; }
   var btn = document.getElementById('connSave'); btn.disabled = true; msg.textContent = 'Checking…';
-  apiPost({ url: url, key: key }, 'getDashboardData', [])
+  apiPost({ url: url, key: key }, 'getDashboardData', [], state.acct)
     .then(function (d) {
       var changed = (getConn() || {}).url !== url;
       setConn({ url: url, key: key });
-      if (changed) { try { localStorage.removeItem(BILLS_KEY); localStorage.removeItem('car-cache:v1'); } catch (e) {} }
+      if (changed) forgetCaches();
       connDlg.close(); setData(d); toast('Connected');
       if (window.carReload) window.carReload();
     })
@@ -531,11 +597,12 @@ function saveConnect() {
 function forgetDevice() {
   if (!confirm('Remove the key and all saved data from this device?')) return;
   setConn(null);
-  try { localStorage.removeItem(BILLS_KEY); localStorage.removeItem('car-cache:v1'); localStorage.removeItem('app'); } catch (e) {}
+  forgetCaches(); try { localStorage.removeItem('app'); } catch (e) {}
   location.reload();
 }
 function load(force) {
-  var cached = force || D ? null : STORE.get(BILLS_KEY);
+  var cached = force || D ? null : STORE.get(cacheKey(state.acct));
+  if (cached && cached.d && (cached.d.account || 'bills') !== state.acct) cached = null;
   if (cached && cached.d) { D = cached.d; document.getElementById('loading').style.display = 'none'; render(); }
   syncBegin();
   FRESH = callRaw('getDashboardData', ['', !!force])
@@ -546,7 +613,22 @@ function load(force) {
     });
   return FRESH;
 }
-function setData(d) { D = d; STORE.set(BILLS_KEY, d); document.getElementById('loading').style.display = 'none'; render(); return d; }
+function setData(d) {
+  if (!d.accounts && state.acct !== 'bills') state.acct = 'bills';   // server not updated yet: bills only
+  var a = d.account || 'bills';
+  STORE.set(cacheKey(a), d);
+  if (a !== state.acct) return d;          // an answer for the account we just switched away from
+  D = d; document.getElementById('loading').style.display = 'none'; render(); return d;
+}
+/** Shows another bank account: its saved copy straight away (if any), then fresh data. */
+function switchAcct(a) {
+  state.acct = a;
+  var c = STORE.get(cacheKey(a));
+  D = c && c.d && (c.d.account || 'bills') === a ? c.d : null;
+  if (D) render();
+  else { document.getElementById('app-bills').style.display = 'none'; var l = document.getElementById('loading'); l.style.display = ''; l.textContent = 'Loading…'; }
+  load();
+}
 function err(e) { toast((e && e.message) || String(e)); document.getElementById('loading').textContent = 'Something went wrong: ' + ((e && e.message) || e); }
 function toast(msg) { var t = document.getElementById('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(function () { t.style.display = 'none'; }, 4000); }
 
@@ -578,10 +660,32 @@ function render() {
   var n = D.attention.overdue.length + D.attention.unmatchedTxns.length, c = document.getElementById('attnCount');
   c.textContent = n; c.style.display = n ? 'inline-block' : 'none';
   fillLists();
+  var label = D.accountLabel || 'Bills', hasHoliday = (D.accounts || []).some(function (a) { return a.id === 'holiday'; });
+  document.getElementById('fcTitle').textContent = 'Projected ' + label.toLowerCase() + '-account balance';
+  document.getElementById('impAcct').textContent = label.toLowerCase();
+  document.getElementById('itemAcct').textContent = label.toLowerCase();
+  if (D.hasBills === false && (state.view === 'bills' || state.view === 'usage')) state.view = 'overview';
+  if (state.app !== 'car') document.getElementById('app-bills').style.display = '';
+  applyAcctUi();
   show(state.view);
-  document.getElementById('appSw').style.display = D.car ? '' : 'none';
-  document.getElementById('appTitle').style.display = D.car ? 'none' : '';
-  if (!state.appSet) { state.appSet = true; var last = 'bills'; try { last = localStorage.getItem('app') || 'bills'; } catch (e) {} setApp(D.car ? last : 'bills'); }
+  var multi = D.car || hasHoliday;
+  document.getElementById('appSw').style.display = multi ? '' : 'none';
+  document.querySelector('#appSw [data-a=car]').style.display = D.car ? '' : 'none';
+  document.querySelector('#appSw [data-a=holiday]').style.display = hasHoliday ? '' : 'none';
+  document.getElementById('appTitle').style.display = multi ? 'none' : '';
+  if (!state.appSet) {
+    state.appSet = true; var last = 'bills'; try { last = localStorage.getItem('app') || 'bills'; } catch (e) {}
+    setApp(last === 'car' && D.car ? 'car' : last === 'holiday' && hasHoliday ? 'holiday' : 'bills');
+  }
+}
+/** Hides what only the bills account has (utility bills) when another account is showing. */
+function applyAcctUi() {
+  var noBills = !!D && D.hasBills === false;
+  document.querySelectorAll('.has-bills').forEach(function (el) {
+    if (noBills) el.style.display = 'none';
+    else if (el.classList.contains('bills-only')) el.style.display = state.app === 'car' ? 'none' : '';
+    else el.style.display = '';
+  });
 }
 
 /* ---------- Bills / Car switch ---------- */
@@ -590,17 +694,20 @@ function setApp(a) {
   state.app = a;
   try { localStorage.setItem('app', a); } catch (e) {}
   document.querySelectorAll('#appSw button').forEach(function (b) { b.classList.toggle('on', b.dataset.a === a); });
-  document.querySelectorAll('.bills-only').forEach(function (el) { el.style.display = a === 'bills' ? '' : 'none'; });
-  document.getElementById('nav').style.display = a === 'bills' ? '' : 'none';
+  var acctApp = a !== 'car';
+  document.querySelectorAll('.bills-only').forEach(function (el) { el.style.display = acctApp ? '' : 'none'; });
+  document.getElementById('nav').style.display = acctApp ? '' : 'none';
   document.getElementById('carNav').style.display = a === 'car' ? '' : 'none';
-  document.getElementById('app-bills').style.display = a === 'bills' ? '' : 'none';
+  document.getElementById('app-bills').style.display = acctApp ? '' : 'none';
   document.getElementById('app-car').style.display = a === 'car' ? '' : 'none';
-  document.title = a === 'car' ? 'Car' : 'Bills';
-  if (a === 'car') window.carOpen(); else if (D) renderView(state.view);
+  document.title = a === 'car' ? 'Car' : a === 'holiday' ? 'Holiday' : 'Bills';
+  if (a === 'car') window.carOpen();
+  else if (a !== state.acct || !D) switchAcct(a);
+  else { applyAcctUi(); renderView(state.view); }
   window.scrollTo(0, 0);
 }
 function renderView(v) {
-  ({ overview: renderOverview, upcoming: renderUpcoming, bills: renderBills, usage: renderUsage, reconcile: renderReconcile })[v]();
+  ({ overview: renderOverview, upcoming: renderUpcoming, bills: renderBills, usage: renderUsage, reconcile: renderReconcile, rules: renderRules })[v]();
 }
 
 /* ---------- overview ---------- */
@@ -641,7 +748,70 @@ function upcomingTable(rows, compact) {
         (compact ? '' : '<td class="hide-sm"><button class="btn small" onclick="skipOcc(\'' + esc(u.key) + '\')" title="This one won\'t happen">Skip</button></td>') + '</tr>';
     }).join('') + '</tbody></table>';
 }
-function renderUpcoming() { document.getElementById('upcomingTable').innerHTML = D.forecast.upcoming.length ? upcomingTable(D.forecast.upcoming, false) : '<div class="empty">Nothing scheduled. Add items on the Recurring tab of the sheet.</div>'; }
+/* ---------- upcoming: filters, search, past actuals ---------- */
+['upQ', 'upWhen', 'upItem', 'upKind'].forEach(function (id) { document.getElementById(id).addEventListener(id === 'upQ' ? 'input' : 'change', renderUpcoming); });
+function clearUpFilters() { document.getElementById('upQ').value = ''; document.getElementById('upWhen').value = 'all'; document.getElementById('upItem').value = ''; document.getElementById('upKind').value = ''; renderUpcoming(); }
+function hay(parts) { return parts.filter(function (x) { return x !== null && x !== undefined && x !== ''; }).join(' ').toLowerCase(); }
+function searchHit(q, parts) { if (!q) return true; var h = hay(parts); return q.split(/\s+/).every(function (w) { return h.indexOf(w) >= 0; }); }
+function amountDiff(p) { return p.state === 'paid' && p.expected !== null && p.expected !== undefined ? Math.round((p.amount - p.expected) * 100) / 100 : 0; }
+function renderUpcoming() {
+  var f = D.forecast, past = f.past || [], today = D.today;
+  var names = uniq(f.upcoming.map(function (u) { return u.name; }).concat(past.filter(function (p) { return p.key; }).map(function (p) { return p.name; })).concat((D.rules || []).map(function (r) { return r.name; }))).sort(function (a, b) { return a.localeCompare(b); });
+  setOpts('upItem', names, 'All items');
+  var q = val('upQ').trim().toLowerCase(), when = val('upWhen'), item = val('upItem'), kind = val('upKind');
+  document.getElementById('upClear').style.display = q || when !== 'all' || item || kind ? '' : 'none';
+  var until = when === '30' ? iso(addDays(pd(today), 30)) : when === '90' ? iso(addDays(pd(today), 91)) : null;
+  var ahead = when === 'past' || kind === 'diff' || kind === 'unmatched' ? [] : f.upcoming.filter(function (u) {
+    if (until && u.date > until) return false;
+    if (item && u.name !== item) return false;
+    if (kind === 'out' && u.amount >= 0 || kind === 'in' && u.amount <= 0) return false;
+    if (kind === 'overdue' && u.state !== 'overdue' || kind === 'estimate' && u.source !== 'estimate' || kind === 'bill' && u.source !== 'bill') return false;
+    return searchHit(q, [u.name, u.note, u.source === 'estimate' ? 'estimate est' : u.source, u.state, money(u.amount)]);
+  });
+  var showPast = when === 'all' || when === 'past';
+  var pastRows = !showPast || kind === 'overdue' ? [] : past.filter(function (p) {
+    if (item && p.name !== item) return false;
+    var amt = p.amount === null ? p.expected : p.amount;
+    if (kind === 'out' && !(amt < 0) || kind === 'in' && !(amt > 0)) return false;
+    if (kind === 'estimate' && p.source !== 'estimate' || kind === 'bill' && p.source !== 'bill' && p.how !== 'bill') return false;
+    if (kind === 'diff' && Math.abs(amountDiff(p)) < 0.01) return false;
+    if (kind === 'unmatched' && p.state !== 'unmatched' && p.state !== 'one-off') return false;
+    return searchHit(q, [p.name, p.desc, p.state, p.how, p.source, money(p.amount)]);
+  });
+  var sum = function (a, g) { return a.reduce(function (s, x) { return s + (g(x) || 0); }, 0); };
+  var aOut = sum(ahead, function (u) { return u.amount < 0 ? u.amount : 0; }), aIn = sum(ahead, function (u) { return u.amount > 0 ? u.amount : 0; });
+  var pOut = sum(pastRows, function (p) { return p.amount < 0 ? p.amount : 0; }), pIn = sum(pastRows, function (p) { return p.amount > 0 ? p.amount : 0; });
+  document.getElementById('upSummary').innerHTML =
+    (when === 'past' ? '' : '<b>' + ahead.length + '</b> ahead' + (ahead.length ? ' · out ' + money(aOut) + ' · in ' + money(aIn) : '')) +
+    (showPast ? (when === 'past' ? '' : ' &nbsp;|&nbsp; ') + '<b>' + pastRows.length + '</b> past' + (pastRows.length ? ' · out ' + money(pOut) + ' · in ' + money(pIn) : '') : '');
+  document.getElementById('upAheadCard').style.display = when === 'past' ? 'none' : '';
+  document.getElementById('upPastCard').style.display = showPast ? '' : 'none';
+  document.getElementById('upcomingTable').innerHTML = ahead.length ? upcomingTable(ahead, false) :
+    '<div class="empty">' + (f.upcoming.length ? 'Nothing ahead matches these filters.' : 'Nothing scheduled. Use + Add item, or add rows on the Recurring tab of the sheet.') + '</div>';
+  document.getElementById('pastTable').innerHTML = pastRows.length ? pastTable(pastRows) :
+    '<div class="empty">' + (past.length ? 'No past actuals match these filters.' : 'No transactions since the opening date yet. Import a bank CSV on the Reconcile tab.') + '</div>';
+}
+function daysWord(n) { return n === 0 ? 'on the day' : Math.abs(n) + ' day' + (Math.abs(n) === 1 ? '' : 's') + (n > 0 ? ' late' : ' early'); }
+function pastTable(rows) {
+  return '<table><thead><tr><th>Date</th><th>Item</th><th class="num">Actual</th><th class="num hide-sm">Expected</th><th class="num hide-sm">Balance</th></tr></thead><tbody>' +
+    rows.map(function (p) {
+      var tags = '', sub = [];
+      if (p.state === 'one-off') tags = ' <span class="tag">one-off</span>';
+      else if (p.state === 'unmatched') tags = ' <span class="status warn" style="cursor:pointer" onclick="show(\'reconcile\')"><i>!</i> not matched</span>';
+      else if (p.state === 'skipped') tags = ' <span class="tag">skipped</span>';
+      else { tags = sourceTag(p) + (p.how && p.how !== 'text' ? ' <span class="how ' + esc(p.how) + '">' + esc(p.how) + '</span>' : ''); }
+      if (p.state === 'paid' && p.due) { var dd = Math.round((pd(p.date) - pd(p.due)) / 864e5); if (dd) sub.push('due ' + fdate(p.due) + ', ' + daysWord(dd)); }
+      if (p.cashback) sub.push('plus ' + money(p.cashback) + ' cashback');
+      if (p.desc && p.state === 'paid') sub.push(esc(p.desc));
+      var diff = amountDiff(p), actual = p.amount === null ? '<span class="muted">–</span>' : money(p.amount);
+      var exp = p.expected === null || p.expected === undefined ? '' : money(p.expected) +
+        (Math.abs(diff) >= 0.01 ? '<div style="font-size:12px" class="' + (Math.abs(diff) > Math.max(2, Math.abs(p.expected) * 0.05) ? 'status warn' : 'muted') + '">' + (diff > 0 ? '+' : '−') + money(Math.abs(diff)) + '</div>' : '');
+      return '<tr' + (p.state === 'skipped' ? ' class="muted"' : '') + '><td style="white-space:nowrap">' + fdate(p.date) + '</td><td>' + esc(p.name) + tags +
+        (sub.length ? '<div class="muted" style="font-size:12px;overflow-wrap:anywhere">' + sub.join(' · ') + '</div>' : '') + '</td>' +
+        '<td class="num ' + (p.amount > 0 ? 'pos' : 'neg') + '">' + actual + '</td><td class="num hide-sm">' + exp + '</td>' +
+        '<td class="num hide-sm">' + (p.balance === null || p.balance === undefined ? '' : money(p.balance)) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
 
 /* ---------- bills ---------- */
 function fillLists() {
@@ -821,6 +991,48 @@ function renderReconcile() {
   document.getElementById('recentTable').innerHTML = r.length ? '<table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th class="num hide-sm">Balance</th><th>Matched</th><th></th></tr></thead><tbody>' +
     r.map(function (t) { return '<tr><td style="white-space:nowrap">' + fdate(t.date) + '</td><td>' + esc(t.desc) + '</td><td class="num ' + (t.amount > 0 ? 'pos' : '') + '">' + money(t.amount) + '</td><td class="num hide-sm">' + (t.balance === null ? '' : money(t.balance)) + '</td><td>' + esc(t.matched) + (t.how && t.how !== 'one-off' ? ' <span class="how ' + t.how + '">' + t.how + '</span>' : '') + '</td><td>' + (t.matched ? '<button class="btn small" onclick="undo(\'' + t.id + '\')">Undo</button>' : '') + '</td></tr>'; }).join('') +
     '</tbody></table>' : '<div class="empty">No transactions imported yet.</div>';
+}
+
+/* ---------- rules: how each forecast item is worked out, plus the bank-text matching rules ---------- */
+['ruQ', 'ruInactive'].forEach(function (id) { document.getElementById(id).addEventListener(id === 'ruQ' ? 'input' : 'change', renderForecastRules); });
+var FREQ_WORD = { weekly: 'Every week', fortnightly: 'Every 2 weeks', monthly: 'Every month', 'two-monthly': 'Every 2 months', 'bi-monthly': 'Every 2 months', quarterly: 'Every 3 months', 'six-monthly': 'Every 6 months', 'half-yearly': 'Every 6 months', annual: 'Every year', yearly: 'Every year', once: 'Once' };
+var MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function renderRules() { renderForecastRules(); renderMatchRules(); }
+function renderForecastRules() {
+  var st = D.settings, q = val('ruQ').trim().toLowerCase(), showOff = document.getElementById('ruInactive').checked;
+  document.getElementById('fRulesSub').innerHTML = 'One row per item on the <b>' + esc(D.accountLabel || 'Bills') + '</b> account\'s Recurring tab. ' +
+    '<b>Fixed</b> items repeat the same amount on the same schedule until you change them in the sheet - they don\'t adjust themselves from past payments. ' +
+    (D.hasBills === false ? '' : '<b>Estimated</b> utility items take each calendar month\'s average cost per day from your bills (last few years, scaled to the last 12 months), and a real bill replaces the estimate once you enter it. <b>Car</b> items follow the latest matching entry in the car sheet. ') +
+    'Bank-text matching learns new wording, never amounts or dates. "Recent actuals" shows how the last payments compared with what was expected, so you can see when a rule needs updating.';
+  var rules = (D.rules || []).filter(function (r) { return (showOff || r.active) && searchHit(q, [r.name, r.frequency, r.kind, r.notes, r.matchText, (r.billTypes || []).join(' '), r.carItem]); });
+  if (!rules.length) { document.getElementById('fRulesTable').innerHTML = '<div class="empty">' + ((D.rules || []).length ? 'No rules match.' : 'No forecast items yet. Use + Add item.') + '</div>'; return; }
+  if (rules[0].kind === undefined) { document.getElementById('fRulesTable').innerHTML = '<div class="empty">Update the Apps Script to see forecast rules here.</div>'; return; }
+  document.getElementById('fRulesTable').innerHTML = '<table class="frules"><thead><tr><th>Item</th><th>Schedule</th><th class="num">Amount</th><th>Worked out by</th><th>Next</th><th>Recent actuals</th></tr></thead><tbody>' +
+    rules.map(function (r) {
+      var fw = FREQ_WORD[String(r.frequency).toLowerCase()] || esc(r.frequency || '?');
+      var sched = fw + (r.kind === 'once' ? ' · ' + fdate(r.nextDate) : r.nextDate ? ' · from ' + fdate(r.nextDate) : '') + (r.endDate ? ' · until ' + fdate(r.endDate) : '') +
+        (r.skipMonths ? ' · skips ' + r.skipMonths.split(/[,\s]+/).filter(String).map(function (m) { return MONTH_ABBR[+m - 1] || m; }).join(', ') : '');
+      var how = { fixed: 'Fixed', once: 'One-off', estimate: 'Estimated from ' + esc((r.billTypes || []).join(' + ')) + ' bills', car: 'Car sheet: latest "' + esc(r.carItem) + '"', invalid: '<span class="status warn"><i>!</i> Not forecast - check Frequency and Next Date</span>' }[r.kind] || esc(r.kind);
+      if (r.kind === 'fixed' && r.carItem) how += ' <span class="muted">(no car entries for "' + esc(r.carItem) + '" yet)</span>';
+      var amt = r.kind === 'estimate' ? '<span class="muted">est.</span>' + (r.amount ? '<div class="muted" style="font-size:12px">fallback ' + money(r.amount) + '</div>' : '') : r.kind === 'car' ? '<span class="muted">car</span>' : money(r.amount);
+      var nx = r.next ? fdate(r.next.date) + ' <b>' + money(r.next.amount) + '</b>' + sourceTag(r.next) + (r.next.state === 'overdue' ? ' <span class="status warn"><i>!</i> overdue</span>' : '') : '<span class="muted">–</span>';
+      var rec = (r.recent || []).slice(0, 3).map(function (x) {
+        var d = x.expected !== null && x.expected !== undefined ? Math.round((x.actual - x.expected) * 100) / 100 : 0;
+        return '<div style="white-space:nowrap">' + fdate(x.date) + ' ' + money(x.actual) + (Math.abs(d) >= 0.01 ? ' <span class="muted">(' + (d > 0 ? '+' : '−') + money(Math.abs(d)) + ')</span>' : '') + (x.days ? ' <span class="muted">' + daysWord(x.days) + '</span>' : '') + '</div>';
+      }).join('');
+      var drift = '';
+      if (r.recent && r.recent.length >= 2 && r.kind !== 'estimate') {
+        var bits = [];
+        if (r.avgDiff !== null && Math.abs(r.avgDiff) >= Math.max(1, Math.abs(r.amount) * 0.03)) bits.push('avg ' + money(Math.abs(r.avgDiff)) + (r.avgDiff > 0 ? ' more' : ' less'));
+        if (r.avgDays !== null && Math.abs(r.avgDays) >= 2) bits.push('avg ' + daysWord(Math.round(r.avgDays)));
+        if (bits.length) drift = '<div class="status warn" style="margin-top:3px"><i>!</i> ' + bits.join(', ') + ' than the rule</div>';
+      }
+      return '<tr' + (r.active ? '' : ' class="muted"') + '><td><b>' + esc(r.name) + '</b>' + (r.active ? '' : ' <span class="tag">inactive</span>') + (r.notes ? '<div class="muted" style="font-size:12px">' + esc(r.notes) + '</div>' : '') + '</td>' +
+        '<td>' + sched + '</td><td class="num ' + (r.amount > 0 ? 'pos' : '') + '">' + amt + '</td><td>' + how + '</td><td style="white-space:nowrap">' + nx + '</td>' +
+        '<td style="font-size:12.5px">' + (rec || '<span class="muted">none yet</span>') + drift + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+function renderMatchRules() {
   var st = D.settings;
   document.getElementById('rulesSub').innerHTML = 'A transaction matches an item when any phrase below appears in its description, the amount is within ' + st.tolerancePct + '% (3× for estimates) and the date is within ' + st.windowDays + ' days. ' +
     (st.amountOnly ? 'If no phrase matches, an exact amount within ' + st.amountDays + ' days still matches when it can only be one item.' : 'Amount-only matching is off (Settings tab).') + ' Separate phrases with |.';
@@ -914,6 +1126,31 @@ function saveBill() {
   var btn = document.getElementById('billSave'); btn.disabled = true;
   readFile(fm.file.files[0]).then(function (file) { o.file = file; return call('addBill', o); })
     .then(function (d) { setData(d); billDlg.close(); toast('Bill saved'); })
+    .catch(function (e) { toast((e && e.message) || String(e)); })
+    .then(function () { btn.disabled = false; });
+}
+
+/* ---------- add a forecast item (one-off planned payment or a repeating one) ---------- */
+var itemDlg = document.getElementById('itemDlg');
+function itemRep() { var once = itemDlg.querySelector('[name=frequency]').value === 'Once'; itemDlg.querySelectorAll('.rep').forEach(function (el) { el.style.display = once ? 'none' : ''; }); }
+itemDlg.querySelector('[name=frequency]').addEventListener('change', itemRep);
+function openItem() {
+  if (!D) return;
+  var fm = itemDlg.querySelector('form'); fm.reset();
+  fm.date.value = D.today;
+  document.getElementById('matchList').innerHTML = uniq((D.rules || []).map(function (r) { return r.matchText; }).concat((D.rules || []).reduce(function (a, r) { return a.concat(r.learned || []); }, [])))
+    .map(function (t) { return '<option value="' + esc(t) + '">'; }).join('');
+  itemRep();
+  itemDlg.showModal();
+}
+function saveItem() {
+  var fm = itemDlg.querySelector('form');
+  if (!fm.reportValidity()) return;
+  var once = fm.frequency.value === 'Once';
+  var o = { name: fm.name.value.trim(), amount: Math.abs(+fm.amount.value) * +fm.dir.value, frequency: fm.frequency.value, date: fm.date.value,
+            end: once ? '' : fm.end.value, matchText: fm.matchText.value.trim().toUpperCase(), notes: fm.notes.value.trim() };
+  var btn = document.getElementById('itemSave'); btn.disabled = true;
+  call('addForecastItem', o).then(function (d) { setData(d); itemDlg.close(); toast(d.msg || 'Added'); })
     .catch(function (e) { toast((e && e.message) || String(e)); })
     .then(function () { btn.disabled = false; });
 }

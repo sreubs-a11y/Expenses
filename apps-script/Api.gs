@@ -13,7 +13,7 @@ var API_FUNCTIONS_ = {
   getDashboardData: getDashboardData, importCsv: importCsv, matchTxn: matchTxn, ignoreTxn: ignoreTxn,
   skipOccurrence: skipOccurrence, undoReconcile: undoReconcile, runMatching: runMatching,
   addLearnedPhrase: addLearnedPhrase, removeLearnedPhrase: removeLearnedPhrase, setMatchText: setMatchText,
-  addBill: addBill, attachPdf: attachPdf,
+  addBill: addBill, attachPdf: attachPdf, addForecastItem: addForecastItem,
   carGetData: carGetData, carAddFuel: carAddFuel, carAddToll: carAddToll, carAddOther: carAddOther, carDeleteEntry: carDeleteEntry
 };
 
@@ -35,6 +35,7 @@ function doPost(e) {
   if (!fn || !Object.prototype.hasOwnProperty.call(API_FUNCTIONS_, req.fn))
     return apiReply_({ ok: false, error: 'Unknown action: ' + req.fn, code: 'BAD_REQUEST' });
   try {
+    useAccount_(req.account || 'bills');   // which bank account's tabs this request works on
     var data = fn.apply(null, Array.isArray(req.args) ? req.args : []);
     return apiReply_({ ok: true, data: data === undefined ? null : data });
   } catch (err) {
@@ -63,6 +64,7 @@ function onOpen() {
     .addItem('Make a new app key (signs out every device)', 'newAppKey')
     .addSeparator()
     .addItem('Recalculate car fuel economy', 'carRebuildEconomy')
+    .addItem('Repair transaction order', 'repairTransactionOrder')
     .addToUi();
 }
 

@@ -7,6 +7,27 @@
 var SHEETS = { bills: 'Bills', recurring: 'Recurring', txns: 'Transactions', rec: 'Reconcile', settings: 'Settings' };
 var BILL_TYPE_ORDER = ['Electricity', 'Gas', 'Water', 'Sewer'];
 
+/**
+ * Bank accounts with their own forecast and reconciliation. Each has its own Recurring / Transactions /
+ * Reconcile tabs; Settings are shared, with per-account rows named "<prefix><Setting>" (e.g. "Holiday Opening Date").
+ * Only the bills account has utility bills and car items.
+ */
+var ACCOUNTS_ = {
+  bills: { id: 'bills', label: 'Bills', recurring: 'Recurring', txns: 'Transactions', rec: 'Reconcile', prefix: '', bills: true, car: true },
+  holiday: { id: 'holiday', label: 'Holiday', recurring: 'Holiday Recurring', txns: 'Holiday Transactions', rec: 'Holiday Reconcile', prefix: 'Holiday ', bills: false, car: false }
+};
+var ACCOUNT_ = ACCOUNTS_.bills;
+/** Points every helper at one account's tabs for the rest of this server call. */
+function useAccount_(id) {
+  var a = ACCOUNTS_[id || 'bills'];
+  if (!a || !Object.prototype.hasOwnProperty.call(ACCOUNTS_, id || 'bills')) throw new Error('Unknown account: ' + id);
+  ACCOUNT_ = a;
+  SHEETS.recurring = a.recurring; SHEETS.txns = a.txns; SHEETS.rec = a.rec;
+  forgetTables_();
+  ensureSchema_();
+  return a;
+}
+
 /* ------------------------------------------------------------------ web app */
 
 /* doGet / doPost (the app's API) live in Api.gs. */
@@ -21,6 +42,10 @@ function getDashboardData(msg, force) {
   var model = buildModel_();
   return JSON.parse(JSON.stringify({
     msg: msg || '',
+    account: ACCOUNT_.id,
+    accountLabel: ACCOUNT_.label,
+    hasBills: ACCOUNT_.bills,
+    accounts: Object.keys(ACCOUNTS_).map(function (k) { return { id: k, label: ACCOUNTS_[k].label }; }),
     car: carConfigured_(),
     rules: model.rules,
     today: iso_(today_()),
@@ -77,17 +102,29 @@ function setCell_(name, row, header, value) {
 function readSettings_() {
   var t = readTable_(SHEETS.settings), s = {};
   t.rows.forEach(function (r) { s[String(r.Setting).trim()] = { value: r.Value, row: r._row }; });
-  function num(k, def) { var v = s[k] && s[k].value; return (v === '' || v === undefined || v === null || isNaN(Number(v))) ? def : Number(v); }
+  // Another account reads "<prefix>Setting" first. Its own balance/dates never fall back to the bills account's.
+  var P = ACCOUNT_.prefix;
+  function blank(v) { return v === '' || v === undefined || v === null; }
+  function raw(k, own) {
+    if (P && s[P + k] && !blank(s[P + k].value)) return s[P + k].value;
+    if (P && own) return '';
+    return s[k] ? s[k].value : '';
+  }
+  function num(k, def, own) { var v = raw(k, own); return (blank(v) || isNaN(Number(v))) ? def : Number(v); }
   return {
-    openingBalance: num('Opening Balance', 0),
-    openingDate: s['Opening Date'] && toDate_(s['Opening Date'].value) || today_(),
-    months: num('Forecast Months', 6),
-    lowBalance: num('Low Balance Alert', 0),
+    account: ACCOUNT_.id,
+    openingBalance: num('Opening Balance', 0, true),
+    openingBalanceSet: !blank(raw('Opening Balance', true)),
+    openingDate: toDate_(raw('Opening Date', true)) || today_(),
+    months: num('Forecast Months', P ? 12 : 9, true),
+    historyMonths: num('History Months', P ? 12 : 3, true),
+    lowBalance: num('Low Balance Alert', 0, true),
     windowDays: num('Match Window Days', 5),
     tolerancePct: num('Amount Tolerance %', 10),
     estimateYears: num('Estimate Years', 3),
     amountOnly: String(s['Amount-only Matching'] ? s['Amount-only Matching'].value : 'Yes').toLowerCase().indexOf('n') !== 0,
     amountDays: num('Amount Match Days', 2),
+    cashbackText: P ? String(raw('Cashback Text', true) || '') : s['Cashback Text'] ? String(s['Cashback Text'].value || '') : 'CASHBACK',
     folderId: s['Bills Folder ID'] ? String(s['Bills Folder ID'].value || '') : '',
     _rows: s
   };
@@ -139,24 +176,29 @@ function periodDays_(f) { return f.days || (f.months ? Math.round(f.months * 30.
 
 function buildModel_() {
   var settings = readSettings_();
-  var billsT = readTable_(SHEETS.bills), recT = readTable_(SHEETS.recurring);
+  var billRows = ACCOUNT_.bills ? readTable_(SHEETS.bills).rows : [], recT = readTable_(SHEETS.recurring);
   var txT = readTable_(SHEETS.txns), rcT = readTable_(SHEETS.rec);
-  return computeModel_(settings, billsT.rows, recT.rows, txT.rows, rcT.rows, today_(), carOtherForForecast_());
+  return computeModel_(settings, billRows, recT.rows, txT.rows, rcT.rows, today_(), ACCOUNT_.car ? carOtherForForecast_() : []);
 }
 
 /** Pure: everything below works on plain row objects so it can be tested off-Google. */
 function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOther) {
   var bills = billRows.map(normBill_).filter(function (b) { return b.type; });
-  var txns = txRows.map(function (r) {
+  var allTx = txRows.map(function (r) {
     return { id: String(r['Txn ID']), date: toDate_(r.Date), desc: String(r.Description || ''), amount: Number(r.Amount) || 0,
-             balance: (r.Balance === '' || r.Balance === null || r.Balance === undefined) ? null : Number(r.Balance), order: r._row };
-  }).filter(function (t) { return t.date && t.date >= settings.openingDate; });
+             balance: (r.Balance === '' || r.Balance === null || r.Balance === undefined) ? null : Number(r.Balance), order: r._row,
+             imported: toDate_(r.Imported) };
+  }).filter(function (t) { return t.date; });
+  // Transactions before the Opening Date are kept only for the balance history on the graph; they're never reconciled.
+  var txns = allTx.filter(function (t) { return t.date >= settings.openingDate; });
+  var dayEnd = endOfDayBalances_(allTx);
+  var lastImport = allTx.reduce(function (m, t) { return t.imported && (!m || t.imported > m) ? t.imported : m; }, null);
 
   var status = {};      // occurrence key -> {status, txnId}
   var txnUsed = {};     // txn id -> {status, occ}
   rcRows.forEach(function (r) {
     var occ = String(r.Occurrence || ''), tid = String(r['Txn ID'] || ''), st = String(r.Status || '').toLowerCase();
-    if (occ) status[occ] = { status: st, txnId: tid };
+    if (occ && !/cashback/i.test(String(r.Note || ''))) status[occ] = { status: st, txnId: tid };
     if (tid) txnUsed[tid] = { status: st, occ: occ, note: String(r.Note || '') };
   });
 
@@ -165,13 +207,16 @@ function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOt
   if (txns.length) {
     var sorted = txns.slice().sort(function (a, b) { return a.date - b.date || a.order - b.order; });
     var last = sorted[sorted.length - 1];
-    var withBal = sorted.filter(function (t) { return t.balance !== null && !isNaN(t.balance); });
-    if (withBal.length && withBal[withBal.length - 1].date >= last.date) {
-      var lb = withBal[withBal.length - 1];
-      start = { date: lb.date, balance: lb.balance, source: 'bank' };
+    var lastDay = iso_(last.date);
+    if (dayEnd.map[lastDay] !== undefined) {
+      start = { date: last.date, balance: dayEnd.map[lastDay], source: 'bank' };
     } else {
       start = { date: last.date, balance: settings.openingBalance + sorted.reduce(function (s, t) { return s + t.amount; }, 0), source: 'opening+imports' };
     }
+  } else if (allTx.length && !settings.openingBalanceSet && dayEnd.days.length) {
+    // Nothing since the Opening Date and no Opening Balance typed in: start from the latest bank balance before it.
+    var lastK = dayEnd.days[dayEnd.days.length - 1];
+    start = { date: fromIso_(lastK), balance: dayEnd.map[lastK], source: 'bank' };
   }
 
   var horizon = addMonths_(today > start.date ? today : start.date, settings.months);
@@ -230,6 +275,13 @@ function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOt
   var addresses = {};
   bills.forEach(function (b) { addresses[b.address] = Math.max(addresses[b.address] || 0, b.issued ? b.issued.getTime() : 0); });
 
+  var past = pastActuals_(occs, txns, txnUsed);
+  var rules = recRows.filter(function (r) { return String(r.Name || '').trim(); }).map(function (r) {
+    var name = String(r.Name).trim(), n = 0;
+    occs.forEach(function (o) { if (o.name === name && o.state === 'paid' && o.txnId) n++; });
+    return ruleOut_(r, name, n, upcoming, past, carOther || []);
+  });
+
   return {
     settings: { openingBalance: settings.openingBalance, openingDate: iso_(settings.openingDate), months: settings.months,
                 lowBalance: settings.lowBalance, windowDays: settings.windowDays, tolerancePct: settings.tolerancePct,
@@ -237,20 +289,89 @@ function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOt
     bills: bills.map(billOut_),
     addresses: Object.keys(addresses).sort(function (a, b) { return addresses[b] - addresses[a]; }),
     forecast: { start: { date: iso_(start.date), balance: start.balance, source: start.source },
-                low: low.date ? low : null, series: series, upcoming: upcoming, horizon: iso_(horizon) },
+                low: low.date ? low : null, series: series, upcoming: upcoming, horizon: iso_(horizon),
+                history: balanceHistory_(dayEnd, addMonths_(today, -settings.historyMonths), start.date),
+                lastImport: lastImport ? iso_(lastImport) : '', past: past },
     attention: { overdue: upcoming.filter(function (u) { return u.state === 'overdue'; }), unmatchedTxns: unmatchedTxns },
     recentTxns: txns.sort(function (a, b) { return b.date - a.date || b.order - a.order; }).slice(0, 40).map(function (t) {
       var o = matchedTxn[t.id], u = txnUsed[t.id];
       return { id: t.id, date: iso_(t.date), desc: t.desc, amount: t.amount, balance: t.balance,
-               matched: o ? o.name : (u && u.status === 'ignored' ? '(one-off)' : ''), how: u ? matchMethod_(u) : '' };
+               matched: o ? o.name : (u && u.status === 'ignored' ? '(one-off)' : u && u.status === 'matched' && u.occ ? u.occ.split('|')[0] : ''),
+               how: u ? matchMethod_(u) : '' };
     }),
-    rules: recRows.filter(function (r) { return String(r.Name || '').trim(); }).map(function (r) {
-      var name = String(r.Name).trim(), n = 0;
-      occs.forEach(function (o) { if (o.name === name && o.state === 'paid' && o.txnId) n++; });
-      return { name: name, matchText: String(r['Match Text'] || ''), learned: splitPhrases_(r['Learned Text']),
-               active: String(r.Active || 'Yes').toLowerCase().indexOf('n') !== 0, matched: n };
-    }),
+    rules: rules,
     _occs: occs, _txns: txns, _status: status, _txnUsed: txnUsed
+  };
+}
+
+/**
+ * Pure: what actually happened since the Opening Date, newest first. One row per bank transaction
+ * (matched to an item, marked one-off, or not yet matched), plus bills marked paid without a transaction and
+ * skipped items. Cashback credits are folded into the payment they were paired with.
+ */
+function pastActuals_(occs, txns, txnUsed) {
+  var byKey = {}; occs.forEach(function (o) { byKey[o.key] = o; });
+  var cb = {}, out = [], seenOcc = {};
+  txns.forEach(function (t) {
+    var u = txnUsed[t.id];
+    if (u && u.status === 'matched' && u.occ && /cashback/i.test(u.note)) cb[u.occ] = Math.round(((cb[u.occ] || 0) + t.amount) * 100) / 100;
+  });
+  txns.forEach(function (t) {
+    var u = txnUsed[t.id], row = { date: iso_(t.date), amount: t.amount, balance: t.balance, desc: t.desc, txnId: t.id, order: t.order };
+    if (!u) { row.state = 'unmatched'; row.name = t.desc; }
+    else if (u.status === 'ignored') { row.state = 'one-off'; row.name = t.desc; }
+    else if (u.status === 'matched' && u.occ && !/cashback/i.test(u.note)) {
+      var o = byKey[u.occ];
+      row.state = 'paid'; row.key = u.occ; row.how = matchMethod_(u);
+      row.name = o ? o.name : u.occ.split('|')[0];
+      row.due = o ? iso_(o.date) : u.occ.split('|')[1] || '';
+      row.expected = o ? o.amount : null;
+      row.source = o ? o.source : '';
+      row.cashback = cb[u.occ] || 0;
+      seenOcc[u.occ] = true;
+    } else return;
+    out.push(row);
+  });
+  occs.forEach(function (o) {
+    if (seenOcc[o.key]) return;
+    if (o.state === 'paid' && o.bill && !o.txnId)
+      out.push({ date: iso_(o.bill.paid || o.date), amount: -o.bill.total, balance: null, state: 'paid', how: 'bill', key: o.key,
+                 name: o.name, due: iso_(o.date), expected: o.amount, source: o.source, order: 0 });
+    else if (o.state === 'skipped')
+      out.push({ date: iso_(o.date), amount: null, balance: null, state: 'skipped', key: o.key, name: o.name, due: iso_(o.date),
+                 expected: o.amount, source: o.source, order: 0 });
+  });
+  out.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.order || 0) - (a.order || 0); });
+  out.forEach(function (r) { delete r.order; });
+  return out;
+}
+
+/**
+ * Pure: one Recurring row as the app's Rules tab shows it - how it's forecast, what's next, and how its last
+ * actual payments compared with what was expected (amount and days early/late).
+ */
+function ruleOut_(r, name, matchedCount, upcoming, past, carOther) {
+  var f = freqOf_(r.Frequency), billTypes = String(r['Bill Type'] || '').split(',').map(function (s) { return s.trim(); }).filter(String);
+  var carLink = String(r['Car Item'] || '').trim();
+  var hasCar = !!carLink && carOther.some(function (e) { return carItemMatches_(e.item, carLink); });
+  var kind = !f ? 'invalid' : !toDate_(r['Next Date']) ? 'invalid' : f.once ? 'once' : hasCar ? 'car' : billTypes.length ? 'estimate' : 'fixed';
+  var next = upcoming.filter(function (u) { return u.name === name; })[0] || null;
+  var recent = past.filter(function (p) { return p.name === name && p.state === 'paid' && p.amount !== null; }).slice(0, 6).map(function (p) {
+    return { due: p.due, date: p.date, expected: p.expected, actual: p.amount, cashback: p.cashback || 0,
+             days: p.due ? daysBetween_(fromIso_(p.due), fromIso_(p.date)) : null };
+  });
+  var withExp = recent.filter(function (x) { return x.expected !== null && x.expected !== undefined; });
+  var avg = function (a, g) { return a.length ? Math.round(a.reduce(function (s, x) { return s + g(x); }, 0) / a.length * 100) / 100 : null; };
+  var end = toDate_(r['End Date']), nd = toDate_(r['Next Date']);
+  return {
+    name: name, matchText: String(r['Match Text'] || ''), learned: splitPhrases_(r['Learned Text']),
+    active: String(r.Active || 'Yes').toLowerCase().indexOf('n') !== 0, matched: matchedCount,
+    amount: Number(r.Amount) || 0, frequency: String(r.Frequency || ''), nextDate: iso_(nd), endDate: iso_(end),
+    skipMonths: String(r['Skip Months'] || ''), billTypes: billTypes, carItem: carLink, notes: String(r.Notes || ''), kind: kind,
+    next: next ? { date: next.date, amount: next.amount, source: next.source, state: next.state } : null,
+    recent: recent,
+    avgDiff: avg(withExp, function (x) { return Math.abs(x.actual) - Math.abs(x.expected); }),
+    avgDays: avg(recent.filter(function (x) { return x.days !== null; }), function (x) { return x.days; })
   };
 }
 
@@ -318,6 +439,42 @@ function makeEstimator_(bills, years, today) {
   };
 }
 
+/**
+ * Pure: end-of-day bank balance for each day with transactions. Within a day the file order can't be trusted
+ * (banks list newest first), so the day's closing balance is the one no other transaction that day leads on from.
+ */
+function endOfDayBalances_(txs) {
+  var byDay = {};
+  txs.forEach(function (t) { if (t.balance !== null && !isNaN(t.balance)) (byDay[iso_(t.date)] = byDay[iso_(t.date)] || []).push(t); });
+  var map = {}, open = {};
+  Object.keys(byDay).forEach(function (k) {
+    var list = byDay[k], before = {};
+    list.forEach(function (t) { before[(t.balance - t.amount).toFixed(2)] = true; });
+    var closers = list.filter(function (t) { return !before[t.balance.toFixed(2)]; });
+    var closer = closers.length === 1 ? closers[0] : list.slice().sort(function (a, b) { return b.order - a.order; })[0];
+    map[k] = Math.round(closer.balance * 100) / 100;
+    var openers = list.filter(function (t) { return !list.some(function (u) { return u !== t && Math.abs(u.balance - (t.balance - t.amount)) < 0.005; }); });
+    var first = openers.length === 1 ? openers[0] : list[0];
+    open[k] = Math.round((first.balance - first.amount) * 100) / 100;
+  });
+  return { map: map, open: open, days: Object.keys(map).sort() };
+}
+
+/** Pure: daily closing balance from `from` to `to`, carrying the last known balance across quiet days. */
+function balanceHistory_(dayEnd, from, to) {
+  if (!dayEnd.days.length || from > to) return [];
+  var out = [], fk = iso_(from), prev = null, i = 0, days = dayEnd.days;
+  while (i < days.length && days[i] < fk) { prev = dayEnd.map[days[i]]; i++; }
+  if (prev === null && i < days.length) prev = dayEnd.open[days[i]];
+  if (prev === null) return [];
+  for (var d = from; d <= to; d = addDays_(d, 1)) {
+    var k = iso_(d);
+    if (dayEnd.map[k] !== undefined) prev = dayEnd.map[k];
+    out.push([k, prev]);
+  }
+  return out;
+}
+
 /** Pure: does a car "Other" item match a Car Item pattern? Exact, case-insensitive; | separates alternatives. */
 function carItemMatches_(item, pattern) {
   var it = String(item || '').trim().toLowerCase();
@@ -355,12 +512,16 @@ function generateOccurrences_(recRows, from, to, bills, est, carOther) {
         carOut.push({ key: name + '|' + iso_(e.date), name: name, date: e.date, sched: e.date, amount: -e.total, source: 'car',
                       match: match, billTypes: [], freq: f, receipt: e.receipt, note: 'Car: ' + e.item });
       });
-      for (var j = 1; j < 400; j++) {
-        var nd = f.days ? addDays_(latest.date, j * f.days) : addMonths_(latest.date, j * f.months);
+      // Next one is a period after the latest car entry - or the Recurring tab's Next Date if that's later
+      // (e.g. a service that's overdue by the schedule but booked for a set day).
+      var sched1 = f.days ? addDays_(latest.date, f.days) : addMonths_(latest.date, f.months);
+      var useNext = anchor > sched1, from0 = useNext ? anchor : latest.date, j0 = useNext ? 0 : 1;
+      for (var j = j0; j < 400; j++) {
+        var nd = f.days ? addDays_(from0, j * f.days) : addMonths_(from0, j * f.months);
         if (nd > to || (end && nd > end)) break;
         if (nd < lo || skip.indexOf(nd.getMonth() + 1) >= 0) continue;
         carOut.push({ key: name + '|' + iso_(nd), name: name, date: nd, sched: nd, amount: -latest.total, source: 'recurring',
-                      match: match, billTypes: [], freq: f, note: 'Next after car entry ' + iso_(latest.date) });
+                      match: match, billTypes: [], freq: f, note: useNext ? 'Next date from the Recurring tab' : 'Next after car entry ' + iso_(latest.date) });
       }
       out = out.concat(carOut);
       return;
@@ -449,12 +610,28 @@ function suggestPhrase_(desc) {
 function matchMethod_(u) {
   if (u.status === 'ignored') return 'one-off';
   var n = String(u.note || '').toLowerCase();
+  if (n.indexOf('cashback') >= 0) return 'cashback';
   if (n.indexOf('amount') >= 0) return 'amount';
   if (n.indexOf('manual') >= 0) return 'manual';
   return 'text';
 }
 
 /** Pure: proposes matches for unmatched transactions. Returns [{txnId, key, occ, txn, how}] */
+/**
+ * How far (in days) a payment is from an occurrence's allowed window; 0 = inside it.
+ * A real bill can be paid any time from its issue date until a week or so after it's due.
+ * An estimated utility bill can be paid up to three weeks before its estimated due date, or a week or so after.
+ */
+function windowGap_(o, t, settings) {
+  var w = settings.windowDays, lo, hi;
+  if (o.bill) { lo = o.bill.issued ? addDays_(o.bill.issued, -1) : addDays_(o.date, -21); hi = addDays_(o.date, w + 7); }
+  else if (o.billTypes && o.billTypes.length) { lo = addDays_(o.date, -21); hi = addDays_(o.date, w + 7); }
+  else { lo = addDays_(o.date, -w); hi = addDays_(o.date, w); }
+  if (t.date < lo) return daysBetween_(t.date, lo);
+  if (t.date > hi) return daysBetween_(hi, t.date);
+  return 0;
+}
+
 function proposeMatches_(model, settings) {
   var taken = {};
   model._occs.forEach(function (o) { if (o.state === 'paid' || o.state === 'skipped') taken[o.key] = true; });
@@ -468,8 +645,8 @@ function proposeMatches_(model, settings) {
       if (taken[o.key] || o.state === 'before-start') return;
       if ((o.amount < 0) !== (t.amount < 0)) return;
       if (!matchText_(t.desc, o.match)) return;
-      var dd = Math.abs(daysBetween_(o.date, t.date));
-      if (dd > settings.windowDays) return;
+      if (windowGap_(o, t, settings) > 0) return;
+      var dd = Math.abs(daysBetween_(o.date, t.date)) / 10;   // inside the window, nearer is still better
       var tol = Math.abs(o.amount) * settings.tolerancePct / 100 * (o.source === 'estimate' ? 3 : 1);
       var diff = Math.abs(Math.abs(t.amount) - Math.abs(o.amount));
       if (diff > Math.max(tol, 2)) return;
@@ -497,6 +674,30 @@ function proposeMatches_(model, settings) {
       if (perT[p.t.id] === 1 && perO[p.o.key] === 1) { taken[p.o.key] = true; out.push({ txnId: p.t.id, key: p.o.key, occ: p.o, txn: p.t, how: 'amount' }); }
     });
   }
+
+  // Pass 3: small cashback credits paired with a utility payment made the same day (or the day either side).
+  var cbText = settings.cashbackText;
+  if (cbText) {
+    var byKey = {}; model._occs.forEach(function (o) { byKey[o.key] = o; });
+    var pays = [], hasCb = {};
+    model._txns.forEach(function (t) {
+      var u = model._txnUsed[t.id];
+      if (!u || u.status !== 'matched' || !u.occ) return;
+      if (/cashback/i.test(u.note)) { hasCb[u.occ] = true; return; }
+      var o = byKey[u.occ]; if (o && o.billTypes && o.billTypes.length) pays.push({ t: t, o: o });
+    });
+    out.forEach(function (p) { if (p.occ.billTypes && p.occ.billTypes.length) pays.push({ t: p.txn, o: p.occ }); });
+    var paired = {}; out.forEach(function (p) { paired[p.txnId] = true; });
+    free.forEach(function (t) {
+      if (paired[t.id] || t.amount <= 0 || t.amount > 20 || !matchText_(t.desc, cbText)) return;
+      var best = null;
+      pays.forEach(function (p) {
+        if (hasCb[p.o.key] || Math.abs(daysBetween_(p.t.date, t.date)) > 1) return;
+        if (!best || Math.abs(p.t.date - t.date) < Math.abs(best.t.date - t.date)) best = p;
+      });
+      if (best) { hasCb[best.o.key] = true; paired[t.id] = true; out.push({ txnId: t.id, key: best.o.key, occ: best.o, txn: t, how: 'cashback' }); }
+    });
+  }
   return out;
 }
 
@@ -506,9 +707,9 @@ function autoMatch() {
   var props = proposeMatches_(model, settings);
   var now = new Date();
   appendRows_(SHEETS.rec, props.map(function (p) {
-    return { Occurrence: p.key, 'Txn ID': p.txnId, Status: 'matched', Note: p.how === 'amount' ? 'auto: amount' : 'auto: text', Updated: now };
+    return { Occurrence: p.key, 'Txn ID': p.txnId, Status: 'matched', Note: 'auto: ' + p.how, Updated: now };
   }));
-  props.forEach(function (p) { markBillPaid_(p.occ, p.txn.date); });
+  props.forEach(function (p) { if (p.how !== 'cashback') markBillPaid_(p.occ, p.txn.date); });
   return props.length;
 }
 
@@ -607,6 +808,29 @@ function removeLearnedPhrase(name, phrase) {
   removeLearned_(name, phrase);
   return getDashboardData('Removed "' + phrase + '" from ' + name + '. Past matches are kept.');
 }
+/**
+ * Adds a forecast item to the current account's Recurring tab - a one-off planned payment (Frequency "Once")
+ * or a repeating one. form: {name, amount (− out / + in), frequency, date, end, matchText, notes}
+ */
+function addForecastItem(form) {
+  form = form || {};
+  var name = String(form.name || '').trim(), amount = Number(form.amount), freq = String(form.frequency || 'Once').trim();
+  if (!name) throw new Error('Give it a name.');
+  if (!amount || isNaN(amount)) throw new Error('Enter an amount.');
+  if (!freqOf_(freq)) throw new Error('Unknown frequency: ' + freq);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(form.date || ''))) throw new Error('Choose a date.');
+  var f = freqOf_(freq);
+  if (!f.once && readTable_(SHEETS.recurring).rows.some(function (r) { return String(r.Name).trim() === name; }))
+    throw new Error('There is already an item called "' + name + '" - use another name, or change that one in the sheet.');
+  appendRows_(SHEETS.recurring, [{
+    Name: name, Amount: Math.round(amount * 100) / 100, Frequency: freq, 'Next Date': fromIso_(form.date),
+    'End Date': form.end ? fromIso_(form.end) : '', 'Match Text': String(form.matchText || '').trim(), Active: 'Yes',
+    Notes: String(form.notes || '').trim()
+  }]);
+  var n = autoMatch();
+  return getDashboardData('Added ' + name + (n ? ' - ' + n + ' matched' : ''));
+}
+
 function setMatchText(name, text) {
   var r = recurringRow_(name);
   setCell_(SHEETS.recurring, r._row, 'Match Text', String(text || '').trim());
@@ -618,11 +842,28 @@ function setMatchText(name, text) {
  * Adds columns/settings introduced after the workbook was first set up, so old sheets keep working.
  * Runs its checks once per schema version, then remembers it's done.
  */
-var SCHEMA_VERSION_ = '3';
+var SCHEMA_VERSION_ = '6';
+var REC_HEADERS_ = ['Name', 'Amount', 'Frequency', 'Next Date', 'End Date', 'Skip Months', 'Match Text', 'Learned Text', 'Bill Type', 'Car Item', 'Active', 'Notes'];
+var TXN_HEADERS_ = ['Txn ID', 'Date', 'Description', 'Amount', 'Balance', 'Imported'];
+var RECON_HEADERS_ = ['Occurrence', 'Txn ID', 'Status', 'Note', 'Updated'];
+function ensureTab_(name, headers) {
+  var sh = ss_().getSheetByName(name);
+  if (sh) return sh;
+  sh = ss_().insertSheet(name);
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sh.setFrozenRows(1);
+  return sh;
+}
 function ensureSchema_() {
   var props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION_) return;
-  var rec = ss_().getSheetByName(SHEETS.recurring);
+  // v6: tabs for the other accounts (e.g. Holiday), each with its own Recurring / Transactions / Reconcile.
+  Object.keys(ACCOUNTS_).forEach(function (k) {
+    var a = ACCOUNTS_[k];
+    if (a.id === 'bills') return;
+    ensureTab_(a.recurring, REC_HEADERS_); ensureTab_(a.txns, TXN_HEADERS_); ensureTab_(a.rec, RECON_HEADERS_);
+  });
+  var rec = ss_().getSheetByName(ACCOUNTS_.bills.recurring);
   var head = rec.getRange(1, 1, 1, rec.getLastColumn()).getValues()[0].map(function (h) { return String(h).trim(); });
   if (head.indexOf('Learned Text') < 0) {
     var after = head.indexOf('Match Text') + 1 || head.length;
@@ -639,7 +880,14 @@ function ensureSchema_() {
   var keys = st.getDataRange().getValues().map(function (r) { return String(r[0]).trim(); });
   [['Amount-only Matching', 'Yes', 'Yes = when the description doesn\'t match, still match a transaction whose amount is exactly right and date is close, if it can only be one item. Never used for estimates.'],
    ['Amount Match Days', 2, 'How many days either side of the due date an amount-only match can be.'],
-   ['Car Sheet ID', '', 'ID (or full link) of your Vehicle Expenses Google Sheet. Leave blank to hide the Car section.']]
+   ['Car Sheet ID', '', 'ID (or full link) of your Vehicle Expenses Google Sheet. Leave blank to hide the Car section.'],
+   ['History Months', 3, 'How many months of actual bank balance to show before today on the graph.'],
+   ['Cashback Text', 'CASHBACK', 'Small credits (under $20) with this in the description are paired with a utility payment made the same day. Blank = off.'],
+   ['Holiday Opening Balance', '', 'Holiday account. Leave blank to start from the latest imported bank balance.'],
+   ['Holiday Opening Date', today_(), 'Holiday account. Transactions from this date are reconciled; earlier ones only draw the balance history.'],
+   ['Holiday Forecast Months', 12, 'Holiday account. How far ahead to forecast.'],
+   ['Holiday History Months', 12, 'Holiday account. Months of actual balance to show (and keep on import) before today.'],
+   ['Holiday Low Balance Alert', 0, 'Holiday account. Warn when the forecast drops below this.']]
     .forEach(function (row) { if (keys.indexOf(row[0]) < 0) st.appendRow(row); });
   forgetTables_();
   props.setProperty('SCHEMA_VERSION', SCHEMA_VERSION_);
@@ -731,23 +979,99 @@ function parseBankCsv_(text) {
   return { rows: out, columns: col, header: hasHeader };
 }
 
+/**
+ * Pure: puts rows in date order and, within each day, oldest-first by following the balance chain
+ * (a row's opening balance = balance - amount = the previous row's balance). Rows without balances, or a chain
+ * that can't be resolved, fall back to reversing their incoming order (bank exports list newest first) -
+ * or, with fallback 'keep', to leaving it as it is (rows already stored oldest-first).
+ * Works on any row shape via the three accessors.
+ */
+function chainOrder_(rows, getDate, getAmt, getBal, fallback) {
+  var byDay = {}, keys = [];
+  rows.forEach(function (r, i) {
+    var k = iso_(toDate_(getDate(r)));
+    if (!byDay[k]) { byDay[k] = []; keys.push(k); }
+    byDay[k].push({ r: r, i: i });
+  });
+  keys.sort();
+  var out = [];
+  keys.forEach(function (k) {
+    var list = byDay[k];
+    if (list.length === 1) { out.push(list[0].r); return; }
+    var ok = list.every(function (x) { var b = getBal(x.r); return b !== null && b !== undefined && b !== '' && !isNaN(b); });
+    var ordered = null;
+    if (ok) {
+      var open = function (x) { return (Number(getBal(x.r)) - Number(getAmt(x.r))).toFixed(2); };
+      var bal = function (x) { return Number(getBal(x.r)).toFixed(2); };
+      var starts = list.filter(function (x) { return !list.some(function (y) { return y !== x && bal(y) === open(x); }); });
+      if (starts.length === 1) {
+        ordered = [starts[0]];
+        var used = {}; used[starts[0].i] = true;
+        while (ordered.length < list.length) {
+          var cur = ordered[ordered.length - 1];
+          var next = list.filter(function (y) { return !used[y.i] && open(y) === bal(cur); });
+          if (next.length !== 1) { ordered = null; break; }
+          used[next[0].i] = true; ordered.push(next[0]);
+        }
+      }
+    }
+    if (!ordered) ordered = fallback === 'keep' ? list : list.slice().reverse();
+    ordered.forEach(function (x) { out.push(x.r); });
+  });
+  return out;
+}
+
+/**
+ * One-off repair (Dashboard menu): rewrites each account's Transactions tab in date order, oldest-first within
+ * each day. Same rows, same IDs - Reconcile refers to Txn IDs, not row numbers, so it stays valid.
+ */
+function repairTransactionOrder() {
+  var keep = ACCOUNT_.id, msgs = [];
+  try {
+    Object.keys(ACCOUNTS_).forEach(function (k) {
+      if (!ss_().getSheetByName(ACCOUNTS_[k].txns)) return;
+      useAccount_(k);
+      var t = readTable_(SHEETS.txns);
+      if (!t.rows.length) return;
+      var sorted = chainOrder_(t.rows, function (r) { return r.Date; }, function (r) { return r.Amount; },
+                               function (r) { return r.Balance; }, 'keep');
+      var moved = sorted.filter(function (o, i) { return o !== t.rows[i]; }).length;
+      var data = sorted.map(function (o) { return t.headers.map(function (h) { return o[h] === undefined ? '' : o[h]; }); });
+      var last = t.sheet.getLastRow();
+      for (var pad = data.length + 2; pad <= last; pad++) data.push(t.headers.map(function () { return ''; }));  // blank rows go to the end
+      t.sheet.getRange(2, 1, data.length, t.headers.length).setValues(data);
+      forgetTables_(SHEETS.txns);
+      msgs.push(ACCOUNTS_[k].label + ': ' + t.rows.length + ' transactions, ' + moved + ' moved');
+    });
+  } finally { useAccount_(keep); }
+  try { SpreadsheetApp.getUi().alert('Transaction order repaired\n\n' + msgs.join('\n')); } catch (e) {}
+  return msgs;
+}
+
 function txnKey_(t) { return iso_(t.date) + '|' + t.amount.toFixed(2) + '|' + t.desc.toUpperCase() + '|' + (t.balance === null ? '' : t.balance.toFixed(2)); }
 function hash_(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return ('0000000' + h.toString(16)).slice(-8); }
+function blankCell_(v) { return v === '' || v === null || v === undefined; }
 
 /** Called from the dashboard with the CSV text. Skips anything already imported and anything before the Opening Date. */
 function importCsv(text) {
+  ensureSchema_();
   var settings = readSettings_();
   var parsed = parseBankCsv_(text);
   var existing = readTable_(SHEETS.txns).rows;
   var seen = {}, ids = {};
   existing.forEach(function (r) {
-    var k = txnKey_({ date: toDate_(r.Date), desc: String(r.Description || ''), amount: Number(r.Amount),
-                      balance: r.Balance === '' ? null : Number(r.Balance) });
+    // Same normalising as parseBankCsv_ (trimmed, single spaces), so rows typed or pasted into the sheet by hand
+    // with the bank's double spaces are still recognised as already imported.
+    var k = txnKey_({ date: toDate_(r.Date), desc: String(r.Description || '').trim().replace(/\s+/g, ' '), amount: Number(r.Amount),
+                      balance: blankCell_(r.Balance) ? null : Number(r.Balance) });
     seen[k] = (seen[k] || 0) + 1; ids[String(r['Txn ID'])] = true;
   });
   var inFile = {}, add = [], now = new Date(), early = 0;
+  // Keep a few months before the Opening Date too, for the balance history on the graph (never reconciled).
+  var histFrom = addDays_(addMonths_(today_(), -settings.historyMonths), -7);
+  var keepFrom = histFrom < settings.openingDate ? histFrom : settings.openingDate;
   parsed.rows.sort(function (a, b) { return a.date - b.date; }).forEach(function (t) {
-    if (t.date < settings.openingDate) { early++; return; }
+    if (t.date < keepFrom) { early++; return; }
     var k = txnKey_(t);
     inFile[k] = (inFile[k] || 0) + 1;
     if (inFile[k] <= (seen[k] || 0)) return;
@@ -756,6 +1080,9 @@ function importCsv(text) {
     ids[id] = true;
     add.push({ 'Txn ID': id, Date: t.date, Description: t.desc, Amount: t.amount, Balance: t.balance === null ? '' : t.balance, Imported: now });
   });
+  // IDs are already fixed above (file order); this only changes the order rows are written in: oldest-first within
+  // a day, so the last row of a day is its closing balance.
+  add = chainOrder_(add, function (r) { return r.Date; }, function (r) { return r.Amount; }, function (r) { return r.Balance; });
   appendRows_(SHEETS.txns, add);
   var matched = add.length ? autoMatch() : 0;
   return { added: add.length, duplicates: parsed.rows.length - add.length - early, beforeStart: early, matched: matched,

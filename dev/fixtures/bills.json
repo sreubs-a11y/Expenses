@@ -1,0 +1,308 @@
+{
+ "Bills": [
+  [
+   "Bill Type",
+   "Biller",
+   "Invoice No.",
+   "Date Issued",
+   "Date Due",
+   "Date Paid",
+   "Period From",
+   "Period To",
+   "Days",
+   "Quantity",
+   "Unit",
+   "Subtotal",
+   "Discount",
+   "Total",
+   "Supply Address",
+   "Bill PDF",
+   "Notes"
+  ],
+  [
+   "Electricity",
+   "Test Energy",
+   "E-1",
+   {
+    "$d": "2026-10-09"
+   },
+   {
+    "$d": "2026-10-26"
+   },
+   {
+    "$d": "2026-10-13"
+   },
+   {
+    "$d": "2026-09-08"
+   },
+   {
+    "$d": "2026-10-07"
+   },
+   30,
+   600,
+   "kWh",
+   260,
+   50,
+   210,
+   "1 Test St",
+   "",
+   ""
+  ],
+  [
+   "Gas",
+   "Test Energy",
+   "G-1",
+   {
+    "$d": "2026-09-07"
+   },
+   {
+    "$d": "2026-09-22"
+   },
+   {
+    "$d": "2026-09-08"
+   },
+   {
+    "$d": "2026-07-04"
+   },
+   {
+    "$d": "2026-09-04"
+   },
+   63,
+   2800,
+   "MJ",
+   220,
+   10,
+   210,
+   "1 Test St",
+   "",
+   ""
+  ],
+  [
+   "Electricity",
+   "Test Energy",
+   "E-2",
+   {
+    "$d": "2026-11-09"
+   },
+   {
+    "$d": "2026-11-24"
+   },
+   "",
+   {
+    "$d": "2026-10-08"
+   },
+   {
+    "$d": "2026-11-07"
+   },
+   31,
+   520,
+   "kWh",
+   256.29,
+   67.53,
+   188.76,
+   "1 Test St",
+   "",
+   ""
+  ],
+  [
+   "Gas",
+   "Test Energy",
+   "G-2",
+   {
+    "$d": "2026-11-06"
+   },
+   {
+    "$d": "2026-11-23"
+   },
+   "",
+   {
+    "$d": "2026-09-04"
+   },
+   {
+    "$d": "2026-11-04"
+   },
+   62,
+   2931,
+   "MJ",
+   214.65,
+   15.73,
+   198.92,
+   "1 Test St",
+   "",
+   ""
+  ]
+ ],
+ "Recurring": [
+  [
+   "Name",
+   "Amount",
+   "Frequency",
+   "Next Date",
+   "End Date",
+   "Skip Months",
+   "Match Text",
+   "Learned Text",
+   "Bill Type",
+   "Car Item",
+   "Active",
+   "Notes"
+  ],
+  [
+   "Transfer",
+   750,
+   "Weekly",
+   {
+    "$d": "2026-11-25"
+   },
+   "",
+   "",
+   "TRANSFER",
+   "",
+   "",
+   "",
+   "Yes",
+   ""
+  ],
+  [
+   "Electricity",
+   -200,
+   "Monthly",
+   {
+    "$d": "2026-11-24"
+   },
+   "",
+   "",
+   "ACCT111",
+   "",
+   "Electricity",
+   "",
+   "Yes",
+   ""
+  ],
+  [
+   "Gas",
+   -200,
+   "Two-monthly",
+   {
+    "$d": "2026-11-23"
+   },
+   "",
+   "",
+   "ACCT222",
+   "",
+   "Gas",
+   "",
+   "Yes",
+   ""
+  ],
+  [
+   "Phone",
+   -12,
+   "Fortnightly",
+   {
+    "$d": "2026-11-23"
+   },
+   "",
+   "",
+   "PHONECO",
+   "",
+   "",
+   "",
+   "Yes",
+   ""
+  ]
+ ],
+ "Transactions": [
+  [
+   "Txn ID",
+   "Date",
+   "Description",
+   "Amount",
+   "Balance",
+   "Imported"
+  ]
+ ],
+ "Reconcile": [
+  [
+   "Occurrence",
+   "Txn ID",
+   "Status",
+   "Note",
+   "Updated"
+  ]
+ ],
+ "Settings": [
+  [
+   "Setting",
+   "Value",
+   "Notes"
+  ],
+  [
+   "Opening Balance",
+   1761.71,
+   ""
+  ],
+  [
+   "Opening Date",
+   {
+    "$d": "2026-11-23"
+   },
+   ""
+  ],
+  [
+   "Forecast Months",
+   9,
+   ""
+  ],
+  [
+   "History Months",
+   3,
+   ""
+  ],
+  [
+   "Low Balance Alert",
+   200,
+   ""
+  ],
+  [
+   "Match Window Days",
+   5,
+   ""
+  ],
+  [
+   "Amount Tolerance %",
+   10,
+   ""
+  ],
+  [
+   "Amount-only Matching",
+   "Yes",
+   ""
+  ],
+  [
+   "Amount Match Days",
+   2,
+   ""
+  ],
+  [
+   "Estimate Years",
+   3,
+   ""
+  ],
+  [
+   "Car Sheet ID",
+   "",
+   ""
+  ],
+  [
+   "Bills Folder ID",
+   "",
+   ""
+  ],
+  [
+   "Cashback Text",
+   "CASHBACK",
+   ""
+  ]
+ ]
+}
