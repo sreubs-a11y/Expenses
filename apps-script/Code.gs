@@ -221,7 +221,9 @@ function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOt
 
   var horizon = addMonths_(today > start.date ? today : start.date, settings.months);
   var est = makeEstimator_(bills, settings.estimateYears, today);
-  var occs = generateOccurrences_(recRows, settings.openingDate, horizon, bills, est, carOther || []);
+  // Occurrences go back as far as the bank history, so older transactions can be shown against the rules too.
+  var occFrom = allTx.reduce(function (m, t) { return t.date < m ? t.date : m; }, settings.openingDate);
+  var occs = generateOccurrences_(recRows, occFrom, horizon, bills, est, carOther || []);
 
   occs.forEach(function (o) {
     var s = status[o.key];
@@ -275,7 +277,10 @@ function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOt
   var addresses = {};
   bills.forEach(function (b) { addresses[b.address] = Math.max(addresses[b.address] || 0, b.issued ? b.issued.getTime() : 0); });
 
-  var past = pastActuals_(occs, txns, txnUsed);
+  // History (before the Opening Date) is matched to the rules here, in memory only - never written to Reconcile.
+  var histUsed = historyMatches_(occs, allTx.filter(function (t) { return t.date < settings.openingDate && !txnUsed[t.id]; }), settings);
+  var used = {}; Object.keys(histUsed).forEach(function (k) { used[k] = histUsed[k]; }); Object.keys(txnUsed).forEach(function (k) { used[k] = txnUsed[k]; });
+  var past = pastActuals_(occs, allTx, used, settings.openingDate);
   var rules = recRows.filter(function (r) { return String(r.Name || '').trim(); }).map(function (r) {
     var name = String(r.Name).trim(), n = 0;
     occs.forEach(function (o) { if (o.name === name && o.state === 'paid' && o.txnId) n++; });
@@ -309,7 +314,25 @@ function computeModel_(settings, billRows, recRows, txRows, rcRows, today, carOt
  * (matched to an item, marked one-off, or not yet matched), plus bills marked paid without a transaction and
  * skipped items. Cashback credits are folded into the payment they were paired with.
  */
-function pastActuals_(occs, txns, txnUsed) {
+/**
+ * Pure: pairs bank history from before the Opening Date with the rules' occurrences, using the same passes as
+ * live matching (text + window + amount, exact amount, cashback) but a wider amount tolerance, since amounts
+ * drift over time (e.g. a transfer that was $650 before it became $750). Returns {txnId: {status, occ, note}}.
+ */
+function historyMatches_(occs, histTx, settings) {
+  if (!histTx.length) return {};
+  var pool = occs.filter(function (o) { return o.state === 'before-start'; })
+    .map(function (o) { var c = {}; for (var k in o) c[k] = o[k]; c.state = 'history'; return c; });
+  var s2 = {}; for (var k in settings) s2[k] = settings[k];
+  s2.tolerancePct = Math.max(settings.tolerancePct, 40);
+  var out = {};
+  proposeMatches_({ _occs: pool, _txns: histTx, _txnUsed: {} }, s2).forEach(function (p) {
+    out[p.txnId] = { status: 'matched', occ: p.key, note: 'history: ' + p.how };
+  });
+  return out;
+}
+
+function pastActuals_(occs, txns, txnUsed, openingDate) {
   var byKey = {}; occs.forEach(function (o) { byKey[o.key] = o; });
   var cb = {}, out = [], seenOcc = {};
   txns.forEach(function (t) {
@@ -317,12 +340,14 @@ function pastActuals_(occs, txns, txnUsed) {
     if (u && u.status === 'matched' && u.occ && /cashback/i.test(u.note)) cb[u.occ] = Math.round(((cb[u.occ] || 0) + t.amount) * 100) / 100;
   });
   txns.forEach(function (t) {
-    var u = txnUsed[t.id], row = { date: iso_(t.date), amount: t.amount, balance: t.balance, desc: t.desc, txnId: t.id, order: t.order };
-    if (!u) { row.state = 'unmatched'; row.name = t.desc; }
+    var u = txnUsed[t.id], hist = openingDate && t.date < openingDate;
+    var row = { date: iso_(t.date), amount: t.amount, balance: t.balance, desc: t.desc, txnId: t.id, order: t.order };
+    if (hist) row.history = true;
+    if (!u) { row.state = hist ? 'unlisted' : 'unmatched'; row.name = t.desc; }
     else if (u.status === 'ignored') { row.state = 'one-off'; row.name = t.desc; }
     else if (u.status === 'matched' && u.occ && !/cashback/i.test(u.note)) {
       var o = byKey[u.occ];
-      row.state = 'paid'; row.key = u.occ; row.how = matchMethod_(u);
+      row.state = 'paid'; row.key = u.occ; row.how = /^history/.test(u.note) ? 'history' : matchMethod_(u);
       row.name = o ? o.name : u.occ.split('|')[0];
       row.due = o ? iso_(o.date) : u.occ.split('|')[1] || '';
       row.expected = o ? o.amount : null;
@@ -361,7 +386,12 @@ function ruleOut_(r, name, matchedCount, upcoming, past, carOther) {
              days: p.due ? daysBetween_(fromIso_(p.due), fromIso_(p.date)) : null };
   });
   var withExp = recent.filter(function (x) { return x.expected !== null && x.expected !== undefined; });
-  var avg = function (a, g) { return a.length ? Math.round(a.reduce(function (s, x) { return s + g(x); }, 0) / a.length * 100) / 100 : null; };
+  // Typical (median) difference, so one unusual payment doesn't make a rule look out of date.
+  var avg = function (a, g) {
+    if (!a.length) return null;
+    var v = a.map(g).sort(function (x, y) { return x - y; }), m = Math.floor(v.length / 2);
+    return Math.round((v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2) * 100) / 100;
+  };
   var end = toDate_(r['End Date']), nd = toDate_(r['Next Date']);
   return {
     name: name, matchText: String(r['Match Text'] || ''), learned: splitPhrases_(r['Learned Text']),
@@ -857,6 +887,15 @@ function ensureTab_(name, headers) {
 function ensureSchema_() {
   var props = PropertiesService.getScriptProperties();
   if (props.getProperty('SCHEMA_VERSION') === SCHEMA_VERSION_) return;
+  // Two requests arriving together must not both upgrade (duplicate rows, "sheet already exists").
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    forgetTables_();
+    if (props.getProperty('SCHEMA_VERSION') !== SCHEMA_VERSION_) upgradeSchema_(props);
+  } finally { lock.releaseLock(); }
+}
+function upgradeSchema_(props) {
   // v6: tabs for the other accounts (e.g. Holiday), each with its own Recurring / Transactions / Reconcile.
   Object.keys(ACCOUNTS_).forEach(function (k) {
     var a = ACCOUNTS_[k];
@@ -1067,17 +1106,16 @@ function importCsv(text) {
     seen[k] = (seen[k] || 0) + 1; ids[String(r['Txn ID'])] = true;
   });
   var inFile = {}, add = [], now = new Date(), early = 0;
-  // Keep a few months before the Opening Date too, for the balance history on the graph (never reconciled).
-  var histFrom = addDays_(addMonths_(today_(), -settings.historyMonths), -7);
-  var keepFrom = histFrom < settings.openingDate ? histFrom : settings.openingDate;
+  // Everything is kept. Rows before the Opening Date are history: shown as past actuals and against the rules,
+  // and drawn on the graph, but never reconciled.
   parsed.rows.sort(function (a, b) { return a.date - b.date; }).forEach(function (t) {
-    if (t.date < keepFrom) { early++; return; }
     var k = txnKey_(t);
     inFile[k] = (inFile[k] || 0) + 1;
     if (inFile[k] <= (seen[k] || 0)) return;
     var id = 'T' + hash_(k + '#' + inFile[k]);
     while (ids[id]) id = 'T' + hash_(id + 'x');
     ids[id] = true;
+    if (t.date < settings.openingDate) early++;
     add.push({ 'Txn ID': id, Date: t.date, Description: t.desc, Amount: t.amount, Balance: t.balance === null ? '' : t.balance, Imported: now });
   });
   // IDs are already fixed above (file order); this only changes the order rows are written in: oldest-first within
@@ -1085,7 +1123,7 @@ function importCsv(text) {
   add = chainOrder_(add, function (r) { return r.Date; }, function (r) { return r.Amount; }, function (r) { return r.Balance; });
   appendRows_(SHEETS.txns, add);
   var matched = add.length ? autoMatch() : 0;
-  return { added: add.length, duplicates: parsed.rows.length - add.length - early, beforeStart: early, matched: matched,
+  return { added: add.length, duplicates: parsed.rows.length - add.length, beforeStart: early, matched: matched,
            data: getDashboardData() };
 }
 

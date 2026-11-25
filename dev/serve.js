@@ -10,11 +10,13 @@ const http = require('http'), fs = require('fs'), path = require('path');
 const loadGs = require('./load-gs');
 const ROOT = path.join(__dirname, '..'), PORT = +process.env.PORT || 8787, KEY = 'd'.repeat(48);
 const fx = f => fs.readFileSync(path.join(__dirname, 'fixtures', f), 'utf8');
-const { ctx } = loadGs({ today: process.env.TODAY || '2026-11-24', appKey: KEY });
+// BILLS_JSON / BILLS_CSV: optional paths to your own (private, never committed) sheet shape and bank export.
+const bills = process.env.BILLS_JSON ? JSON.parse(fs.readFileSync(process.env.BILLS_JSON, 'utf8')) : undefined;
+const { ctx } = loadGs({ today: process.env.TODAY || '2026-11-24', appKey: KEY, bills });
 const call = (fn, args, account) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify({ key: KEY, fn, args: args || [], account }) } }).getContent());
 
 // Seed: the bills fixture CSV, and a holiday account with a weekly deposit and one planned withdrawal.
-call('importCsv', [fx('bank-2026-11-24.csv')], 'bills');
+call('importCsv', [process.env.BILLS_CSV ? fs.readFileSync(process.env.BILLS_CSV, 'utf8') : fx('bank-2026-11-24.csv')], 'bills');
 call('getDashboardData', [], 'holiday');
 call('importCsv', [fx('holiday-bank.csv')], 'holiday');
 call('addForecastItem', [{ name: 'Weekly deposit', amount: 250, frequency: 'Weekly', date: '2026-11-25', matchText: 'FROM EVERYDAY' }], 'holiday');

@@ -75,8 +75,9 @@ Receipts), Tolls (From, To, Total, Comment, Receipts), Other (Date, Item, Total,
 ## Bank CSV
 
 Always the bank's export: header `Date,Description,Credit,Debit,Balance`, dd/mm/yyyy, **newest first**, debits
-negative, multiple spaces inside descriptions. Import keeps `History Months` before the Opening Date (graph only);
-only rows on/after the Opening Date are reconciled. Rows are written oldest-first within a day (`chainOrder_` follows the
+negative, multiple spaces inside descriptions. Import keeps every row. Only rows on/after the Opening Date are
+reconciled (Reconcile tab); older rows are *history*: `historyMatches_` pairs them with rules in memory (never written)
+so they show as past actuals on Upcoming and in each rule's recent actuals, and the graph draws `History Months` of them. Rows are written oldest-first within a day (`chainOrder_` follows the
 balance chain), so the last row of a day is its closing balance; **Dashboard → Repair transaction order** fixes older data.
 
 ## Testing

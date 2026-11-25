@@ -118,6 +118,10 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
 .seg.small button { padding: 4px 10px; font-size: 13px; }
 .grid2.flat > div { min-width: 0; }
 .frules td { font-size: 13px; }
+.unified tr.today td { background: var(--warn-bg); font-size: 12.5px; color: var(--ink); border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); }
+.unified tr.fc td.bal { color: var(--ink2); font-style: italic; }
+.unified td:nth-child(2) { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .unified th, .unified td { padding: 6px 4px; } .unified td { font-size: 12.5px; } .unified td.num { white-space: normal; } }
 .filters { margin-bottom: 6px; }
 @media (max-width: 600px) {
   .frules thead { display: none; } .frules tr { display: block; border-bottom: 1px solid var(--grid); padding: 8px 0; }
@@ -236,29 +240,22 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
       <div class="row filters">
         <input type="search" id="upQ" placeholder="Search items, notes, bank text…" aria-label="Search" style="flex:1;min-width:180px">
         <select id="upWhen" aria-label="When">
-          <option value="all">Ahead + past</option><option value="ahead">Ahead only</option><option value="30">Next 30 days</option><option value="90">Next 3 months</option><option value="past">Past only</option>
+          <option value="all">Past + upcoming</option><option value="past">Past only</option><option value="l90">Last 3 months</option><option value="l365">Last 12 months</option><option value="ahead">Upcoming only</option><option value="30">Next 30 days</option><option value="90">Next 3 months</option>
         </select>
         <select id="upItem" aria-label="Item"><option value="">All items</option></select>
         <select id="upKind" aria-label="Kind">
           <option value="">Everything</option><option value="out">Money out</option><option value="in">Money in</option>
           <option value="overdue">Overdue</option><option value="estimate">Estimates</option><option value="bill">Real bills</option>
-          <option value="diff">Paid a different amount</option><option value="unmatched">Not matched / one-off</option>
+          <option value="diff">Paid a different amount</option><option value="unmatched">Not matched / one-off</option><option value="history">History (before opening date)</option>
         </select>
         <button class="btn small" id="upClear" onclick="clearUpFilters()" style="display:none">Clear</button>
         <span class="spacer" style="flex:1"></span>
         <button class="btn primary" onclick="openItem()">+ Add item</button>
       </div>
-      <div class="muted" id="upSummary" style="margin-bottom:6px"></div>
-    </div>
-    <div class="card" id="upAheadCard">
-      <h2>Everything ahead</h2>
-      <p class="sub">Running balance assumes each item goes out on its date. <span class="tag">bill</span> = real bill entered, <span class="tag">est.</span> = estimated from your bill history.</p>
+      <div class="muted" id="upSummary" style="margin-bottom:8px"></div>
+      <p class="sub" style="margin-bottom:8px">Oldest to newest: what went through the bank (actual amount, what was expected, and the bank's balance after it), then <b>today</b>, then the forecast with its projected balance.
+        <span class="how">history</span> = before the opening date, paired with an item for display only. <span class="tag">bill</span> = real bill, <span class="tag">est.</span> = estimate.</p>
       <div class="scroll" id="upcomingTable"></div>
-    </div>
-    <div class="card" id="upPastCard">
-      <h2>Past actuals</h2>
-      <p class="sub">What actually went through the bank since the opening date, newest first, against what was expected. Balance is the bank's balance after that transaction.</p>
-      <div class="scroll" id="pastTable"></div>
     </div>
   </section>
 
@@ -748,69 +745,89 @@ function upcomingTable(rows, compact) {
         (compact ? '' : '<td class="hide-sm"><button class="btn small" onclick="skipOcc(\'' + esc(u.key) + '\')" title="This one won\'t happen">Skip</button></td>') + '</tr>';
     }).join('') + '</tbody></table>';
 }
-/* ---------- upcoming: filters, search, past actuals ---------- */
+/* ---------- upcoming: one table, oldest to newest - bank actuals, then today, then the forecast ---------- */
 ['upQ', 'upWhen', 'upItem', 'upKind'].forEach(function (id) { document.getElementById(id).addEventListener(id === 'upQ' ? 'input' : 'change', renderUpcoming); });
 function clearUpFilters() { document.getElementById('upQ').value = ''; document.getElementById('upWhen').value = 'all'; document.getElementById('upItem').value = ''; document.getElementById('upKind').value = ''; renderUpcoming(); }
 function hay(parts) { return parts.filter(function (x) { return x !== null && x !== undefined && x !== ''; }).join(' ').toLowerCase(); }
 function searchHit(q, parts) { if (!q) return true; var h = hay(parts); return q.split(/\s+/).every(function (w) { return h.indexOf(w) >= 0; }); }
 function amountDiff(p) { return p.state === 'paid' && p.expected !== null && p.expected !== undefined ? Math.round((p.amount - p.expected) * 100) / 100 : 0; }
+function daysWord(n) { return n === 0 ? 'on the day' : Math.abs(n) + ' day' + (Math.abs(n) === 1 ? '' : 's') + (n > 0 ? ' late' : ' early'); }
+var UPSCROLL = { key: null, top: 0 };
 function renderUpcoming() {
-  var f = D.forecast, past = f.past || [], today = D.today;
+  var f = D.forecast, past = (f.past || []).slice().reverse(), today = D.today;   // server sends past newest-first
   var names = uniq(f.upcoming.map(function (u) { return u.name; }).concat(past.filter(function (p) { return p.key; }).map(function (p) { return p.name; })).concat((D.rules || []).map(function (r) { return r.name; }))).sort(function (a, b) { return a.localeCompare(b); });
   setOpts('upItem', names, 'All items');
   var q = val('upQ').trim().toLowerCase(), when = val('upWhen'), item = val('upItem'), kind = val('upKind');
   document.getElementById('upClear').style.display = q || when !== 'all' || item || kind ? '' : 'none';
   var until = when === '30' ? iso(addDays(pd(today), 30)) : when === '90' ? iso(addDays(pd(today), 91)) : null;
-  var ahead = when === 'past' || kind === 'diff' || kind === 'unmatched' ? [] : f.upcoming.filter(function (u) {
+  var since = when === 'l90' ? iso(addDays(pd(today), -91)) : when === 'l365' ? iso(addDays(pd(today), -365)) : null;
+  var showAhead = when === 'all' || when === 'ahead' || when === '30' || when === '90';
+  var showPast = when === 'all' || when === 'past' || when === 'l90' || when === 'l365';
+  var ahead = !showAhead || kind === 'diff' || kind === 'unmatched' || kind === 'history' ? [] : f.upcoming.filter(function (u) {
     if (until && u.date > until) return false;
     if (item && u.name !== item) return false;
     if (kind === 'out' && u.amount >= 0 || kind === 'in' && u.amount <= 0) return false;
     if (kind === 'overdue' && u.state !== 'overdue' || kind === 'estimate' && u.source !== 'estimate' || kind === 'bill' && u.source !== 'bill') return false;
     return searchHit(q, [u.name, u.note, u.source === 'estimate' ? 'estimate est' : u.source, u.state, money(u.amount)]);
   });
-  var showPast = when === 'all' || when === 'past';
   var pastRows = !showPast || kind === 'overdue' ? [] : past.filter(function (p) {
+    if (since && p.date < since) return false;
     if (item && p.name !== item) return false;
     var amt = p.amount === null ? p.expected : p.amount;
     if (kind === 'out' && !(amt < 0) || kind === 'in' && !(amt > 0)) return false;
     if (kind === 'estimate' && p.source !== 'estimate' || kind === 'bill' && p.source !== 'bill' && p.how !== 'bill') return false;
     if (kind === 'diff' && Math.abs(amountDiff(p)) < 0.01) return false;
-    if (kind === 'unmatched' && p.state !== 'unmatched' && p.state !== 'one-off') return false;
-    return searchHit(q, [p.name, p.desc, p.state, p.how, p.source, money(p.amount)]);
+    if (kind === 'unmatched' && ['unmatched', 'one-off', 'unlisted'].indexOf(p.state) < 0) return false;
+    if (kind === 'history' && !p.history) return false;
+    return searchHit(q, [p.name, p.desc, p.state, p.how, p.source, p.history ? 'history' : '', money(p.amount)]);
   });
   var sum = function (a, g) { return a.reduce(function (s, x) { return s + (g(x) || 0); }, 0); };
-  var aOut = sum(ahead, function (u) { return u.amount < 0 ? u.amount : 0; }), aIn = sum(ahead, function (u) { return u.amount > 0 ? u.amount : 0; });
-  var pOut = sum(pastRows, function (p) { return p.amount < 0 ? p.amount : 0; }), pIn = sum(pastRows, function (p) { return p.amount > 0 ? p.amount : 0; });
-  document.getElementById('upSummary').innerHTML =
-    (when === 'past' ? '' : '<b>' + ahead.length + '</b> ahead' + (ahead.length ? ' · out ' + money(aOut) + ' · in ' + money(aIn) : '')) +
-    (showPast ? (when === 'past' ? '' : ' &nbsp;|&nbsp; ') + '<b>' + pastRows.length + '</b> past' + (pastRows.length ? ' · out ' + money(pOut) + ' · in ' + money(pIn) : '') : '');
-  document.getElementById('upAheadCard').style.display = when === 'past' ? 'none' : '';
-  document.getElementById('upPastCard').style.display = showPast ? '' : 'none';
-  document.getElementById('upcomingTable').innerHTML = ahead.length ? upcomingTable(ahead, false) :
-    '<div class="empty">' + (f.upcoming.length ? 'Nothing ahead matches these filters.' : 'Nothing scheduled. Use + Add item, or add rows on the Recurring tab of the sheet.') + '</div>';
-  document.getElementById('pastTable').innerHTML = pastRows.length ? pastTable(pastRows) :
-    '<div class="empty">' + (past.length ? 'No past actuals match these filters.' : 'No transactions since the opening date yet. Import a bank CSV on the Reconcile tab.') + '</div>';
+  var tot = function (a) { var o = sum(a, function (x) { return x.amount < 0 ? x.amount : 0; }), i = sum(a, function (x) { return x.amount > 0 ? x.amount : 0; }); return a.length ? ' · out ' + money(o) + ' · in ' + money(i) : ''; };
+  var bits = [];
+  if (showPast) bits.push('<b>' + pastRows.length + '</b> past' + tot(pastRows) + (past.length ? ' <span class="muted">(bank data from ' + fdate(past[0].date) + ')</span>' : ''));
+  if (showAhead) bits.push('<b>' + ahead.length + '</b> ahead' + tot(ahead));
+  document.getElementById('upSummary').innerHTML = bits.join(' &nbsp;|&nbsp; ');
+  var el = document.getElementById('upcomingTable');
+  if (!pastRows.length && !ahead.length) {
+    el.innerHTML = '<div class="empty">' + (f.upcoming.length || past.length ? 'Nothing matches these filters.' : 'Nothing yet. Import a bank CSV on the Reconcile tab, and add items with + Add item.') + '</div>';
+    return;
+  }
+  var s = D.settings, start = f.start;
+  var divider = showPast && showAhead ? '<tr class="today"><td colspan="6">Today ' + fdate(today) + ' · ' + (start.source === 'bank' ? 'bank balance ' : 'opening balance ') + '<b>' + money(start.balance) + '</b> on ' + fdate(start.date) + ' · forecast below</td></tr>' : '';
+  el.innerHTML = '<table class="unified"><thead><tr><th>Date</th><th>Item</th><th class="num">Amount</th><th class="num hide-sm">Expected</th><th class="num">Balance</th><th class="hide-sm"></th></tr></thead><tbody>' +
+    pastRows.map(pastRow).join('') + divider + ahead.map(function (u) { return aheadRow(u, s); }).join('') + '</tbody></table>';
+  // Land on today (between the actuals and the forecast); keep the user's place when only the data changed.
+  var key = [state.acct, q, when, item, kind].join('|'), tr = el.querySelector('tr.today');
+  if (key === UPSCROLL.key) el.scrollTop = UPSCROLL.top;
+  else el.scrollTop = tr ? Math.max(0, tr.offsetTop - 110) : 0;
+  UPSCROLL.key = key; UPSCROLL.top = el.scrollTop;
+  el.onscroll = function () { UPSCROLL.top = el.scrollTop; };
 }
-function daysWord(n) { return n === 0 ? 'on the day' : Math.abs(n) + ' day' + (Math.abs(n) === 1 ? '' : 's') + (n > 0 ? ' late' : ' early'); }
-function pastTable(rows) {
-  return '<table><thead><tr><th>Date</th><th>Item</th><th class="num">Actual</th><th class="num hide-sm">Expected</th><th class="num hide-sm">Balance</th></tr></thead><tbody>' +
-    rows.map(function (p) {
-      var tags = '', sub = [];
-      if (p.state === 'one-off') tags = ' <span class="tag">one-off</span>';
-      else if (p.state === 'unmatched') tags = ' <span class="status warn" style="cursor:pointer" onclick="show(\'reconcile\')"><i>!</i> not matched</span>';
-      else if (p.state === 'skipped') tags = ' <span class="tag">skipped</span>';
-      else { tags = sourceTag(p) + (p.how && p.how !== 'text' ? ' <span class="how ' + esc(p.how) + '">' + esc(p.how) + '</span>' : ''); }
-      if (p.state === 'paid' && p.due) { var dd = Math.round((pd(p.date) - pd(p.due)) / 864e5); if (dd) sub.push('due ' + fdate(p.due) + ', ' + daysWord(dd)); }
-      if (p.cashback) sub.push('plus ' + money(p.cashback) + ' cashback');
-      if (p.desc && p.state === 'paid') sub.push(esc(p.desc));
-      var diff = amountDiff(p), actual = p.amount === null ? '<span class="muted">–</span>' : money(p.amount);
-      var exp = p.expected === null || p.expected === undefined ? '' : money(p.expected) +
-        (Math.abs(diff) >= 0.01 ? '<div style="font-size:12px" class="' + (Math.abs(diff) > Math.max(2, Math.abs(p.expected) * 0.05) ? 'status warn' : 'muted') + '">' + (diff > 0 ? '+' : '−') + money(Math.abs(diff)) + '</div>' : '');
-      return '<tr' + (p.state === 'skipped' ? ' class="muted"' : '') + '><td style="white-space:nowrap">' + fdate(p.date) + '</td><td>' + esc(p.name) + tags +
-        (sub.length ? '<div class="muted" style="font-size:12px;overflow-wrap:anywhere">' + sub.join(' · ') + '</div>' : '') + '</td>' +
-        '<td class="num ' + (p.amount > 0 ? 'pos' : 'neg') + '">' + actual + '</td><td class="num hide-sm">' + exp + '</td>' +
-        '<td class="num hide-sm">' + (p.balance === null || p.balance === undefined ? '' : money(p.balance)) + '</td></tr>';
-    }).join('') + '</tbody></table>';
+function pastRow(p) {
+  var tags = '', sub = [];
+  if (p.state === 'one-off') tags = ' <span class="tag">one-off</span>';
+  else if (p.state === 'unmatched') tags = ' <span class="status warn" style="cursor:pointer" onclick="show(\'reconcile\')"><i>!</i> not matched</span>';
+  else if (p.state === 'unlisted') tags = ' <span class="tag" title="Before the opening date and not like any forecast item">not in forecast</span>';
+  else if (p.state === 'skipped') tags = ' <span class="tag">skipped</span>';
+  else tags = sourceTag(p) + (p.how && p.how !== 'text' ? ' <span class="how ' + esc(p.how) + '"' + (p.how === 'history' ? ' title="Before the opening date: paired with this item for display, not reconciled"' : '') + '>' + esc(p.how) + '</span>' : '');
+  if (p.state === 'paid' && p.due) { var dd = Math.round((pd(p.date) - pd(p.due)) / 864e5); if (dd) sub.push('due ' + fdate(p.due) + ', ' + daysWord(dd)); }
+  if (p.cashback) sub.push('plus ' + money(p.cashback) + ' cashback');
+  if (p.desc && p.state === 'paid') sub.push(esc(p.desc));
+  var diff = amountDiff(p), actual = p.amount === null ? '<span class="muted">–</span>' : money(p.amount);
+  var exp = p.expected === null || p.expected === undefined ? '' : money(p.expected) +
+    (Math.abs(diff) >= 0.01 ? '<div style="font-size:12px" class="' + (Math.abs(diff) > Math.max(2, Math.abs(p.expected) * 0.05) ? 'status warn' : 'muted') + '">' + (diff > 0 ? '+' : '−') + money(Math.abs(diff)) + '</div>' : '');
+  return '<tr class="act' + (p.state === 'skipped' || p.state === 'unlisted' ? ' muted' : '') + '"><td style="white-space:nowrap">' + fdate(p.date) + '</td><td>' + esc(p.name) + tags +
+    (sub.length ? '<div class="muted" style="font-size:12px;overflow-wrap:anywhere">' + sub.join(' · ') + '</div>' : '') + '</td>' +
+    '<td class="num ' + (p.amount > 0 ? 'pos' : 'neg') + '">' + actual + '</td><td class="num hide-sm">' + exp + '</td>' +
+    '<td class="num">' + (p.balance === null || p.balance === undefined ? '' : money(p.balance)) + '</td><td class="hide-sm"></td></tr>';
+}
+function aheadRow(u, s) {
+  var flag = u.balance < 0 ? ' <span class="status crit"><i>✕</i></span>' : u.balance < s.lowBalance ? ' <span class="status warn"><i>!</i></span>' : '';
+  var od = u.state === 'overdue' ? ' <span class="status warn"><i>!</i> due ' + fdate(u.due) + '</span>' : '';
+  var pdf = u.pdf ? ' <a href="' + esc(u.pdf) + '" target="_blank">PDF</a>' : '';
+  return '<tr class="fc"><td style="white-space:nowrap">' + fdate(u.date) + '</td><td>' + esc(u.name) + sourceTag(u) + od + pdf + (u.note ? '<div class="muted" style="font-size:12px">' + esc(u.note) + '</div>' : '') + '</td>' +
+    '<td class="num ' + (u.amount > 0 ? 'pos' : 'neg') + '">' + money(u.amount) + '</td><td class="num hide-sm"><span class="muted" style="font-size:12px">forecast</span></td><td class="num bal">' + money(u.balance) + flag + '</td>' +
+    '<td class="hide-sm"><button class="btn small" onclick="skipOcc(\'' + esc(u.key) + '\')" title="This one won\'t happen">Skip</button></td></tr>';
 }
 
 /* ---------- bills ---------- */
@@ -1023,8 +1040,8 @@ function renderForecastRules() {
       var drift = '';
       if (r.recent && r.recent.length >= 2 && r.kind !== 'estimate') {
         var bits = [];
-        if (r.avgDiff !== null && Math.abs(r.avgDiff) >= Math.max(1, Math.abs(r.amount) * 0.03)) bits.push('avg ' + money(Math.abs(r.avgDiff)) + (r.avgDiff > 0 ? ' more' : ' less'));
-        if (r.avgDays !== null && Math.abs(r.avgDays) >= 2) bits.push('avg ' + daysWord(Math.round(r.avgDays)));
+        if (r.avgDiff !== null && Math.abs(r.avgDiff) >= Math.max(1, Math.abs(r.amount) * 0.03)) bits.push('typically ' + money(Math.abs(r.avgDiff)) + (r.avgDiff > 0 ? ' more' : ' less'));
+        if (r.avgDays !== null && Math.abs(r.avgDays) >= 2) bits.push('typically ' + daysWord(Math.round(r.avgDays)));
         if (bits.length) drift = '<div class="status warn" style="margin-top:3px"><i>!</i> ' + bits.join(', ') + ' than the rule</div>';
       }
       return '<tr' + (r.active ? '' : ' class="muted"') + '><td><b>' + esc(r.name) + '</b>' + (r.active ? '' : ' <span class="tag">inactive</span>') + (r.notes ? '<div class="muted" style="font-size:12px">' + esc(r.notes) + '</div>' : '') + '</td>' +
@@ -1097,7 +1114,7 @@ function importCsv() {
   var f = document.getElementById('csvFile').files[0]; if (!f) return toast('Choose a CSV file first');
   var btn = document.getElementById('csvBtn'); btn.disabled = true; toast('Importing…');
   f.text().then(function (txt) { return call('importCsv', txt); }).then(function (r) {
-    document.getElementById('importResult').textContent = r.added + ' new transactions, ' + r.matched + ' matched automatically' + (r.duplicates ? ', ' + r.duplicates + ' already imported' : '') + (r.beforeStart ? ', ' + r.beforeStart + ' before the opening date (ignored)' : '') + '.';
+    document.getElementById('importResult').textContent = r.added + ' new transactions, ' + r.matched + ' matched automatically' + (r.duplicates ? ', ' + r.duplicates + ' already imported' : '') + (r.beforeStart ? ', ' + r.beforeStart + ' before the opening date (kept as history)' : '') + '.';
     setData(r.data); toast('Imported');
   }).catch(function (e) { toast((e && e.message) || String(e)); }).then(function () { btn.disabled = false; });
 }
