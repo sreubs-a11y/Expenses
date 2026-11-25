@@ -4,7 +4,7 @@
  * When you upload a new version to GitHub, bump VERSION: devices fetch the new files fresh
  * (skipping GitHub's 10-minute cache), and an open app reloads itself onto the new version.
  */
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = 'bills-app-' + VERSION;
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './vendor/pdf.min.mjs', './vendor/pdf.worker.min.mjs'];
 

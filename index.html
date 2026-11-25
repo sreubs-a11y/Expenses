@@ -240,7 +240,7 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
       <div class="row filters">
         <input type="search" id="upQ" placeholder="Search items, notes, bank text…" aria-label="Search" style="flex:1;min-width:180px">
         <select id="upWhen" aria-label="When">
-          <option value="all">Past + upcoming</option><option value="past">Past only</option><option value="l90">Last 3 months</option><option value="l365">Last 12 months</option><option value="ahead">Upcoming only</option><option value="30">Next 30 days</option><option value="90">Next 3 months</option>
+          <option value="all">All</option><option value="past">Past only</option><option value="m3">From 3 months ago</option><option value="m1">From 1 month ago</option><option value="w1">From 1 week ago</option><option value="ahead">Upcoming only</option>
         </select>
         <select id="upItem" aria-label="Item"><option value="">All items</option></select>
         <select id="upKind" aria-label="Kind">
@@ -340,7 +340,7 @@ dialog h2 { margin: 0 0 12px; font-size: 16px; }
         <select id="cPeriod" aria-label="Period">
           <option value="fy">This financial year</option>
           <option value="lfy">Last financial year</option>
-          <option value="12m">Last 12 months</option>
+          <option value="12m" selected>Last 12 months</option>
           <option value="cy">This calendar year</option>
           <option value="all">All time</option>
           <option value="custom">Custom…</option>
@@ -751,6 +751,7 @@ function clearUpFilters() { document.getElementById('upQ').value = ''; document.
 function hay(parts) { return parts.filter(function (x) { return x !== null && x !== undefined && x !== ''; }).join(' ').toLowerCase(); }
 function searchHit(q, parts) { if (!q) return true; var h = hay(parts); return q.split(/\s+/).every(function (w) { return h.indexOf(w) >= 0; }); }
 function amountDiff(p) { return p.state === 'paid' && p.expected !== null && p.expected !== undefined ? Math.round((p.amount - p.expected) * 100) / 100 : 0; }
+function addMonthsC(d, n) { var last = new Date(d.getFullYear(), d.getMonth() + n + 1, 0).getDate(); return new Date(d.getFullYear(), d.getMonth() + n, Math.min(d.getDate(), last)); }
 function daysWord(n) { return n === 0 ? 'on the day' : Math.abs(n) + ' day' + (Math.abs(n) === 1 ? '' : 's') + (n > 0 ? ' late' : ' early'); }
 var UPSCROLL = { key: null, top: 0 };
 function renderUpcoming() {
@@ -759,12 +760,10 @@ function renderUpcoming() {
   setOpts('upItem', names, 'All items');
   var q = val('upQ').trim().toLowerCase(), when = val('upWhen'), item = val('upItem'), kind = val('upKind');
   document.getElementById('upClear').style.display = q || when !== 'all' || item || kind ? '' : 'none';
-  var until = when === '30' ? iso(addDays(pd(today), 30)) : when === '90' ? iso(addDays(pd(today), 91)) : null;
-  var since = when === 'l90' ? iso(addDays(pd(today), -91)) : when === 'l365' ? iso(addDays(pd(today), -365)) : null;
-  var showAhead = when === 'all' || when === 'ahead' || when === '30' || when === '90';
-  var showPast = when === 'all' || when === 'past' || when === 'l90' || when === 'l365';
+  // "From … ago" = recent actuals plus everything upcoming.
+  var since = { m3: iso(addMonthsC(pd(today), -3)), m1: iso(addMonthsC(pd(today), -1)), w1: iso(addDays(pd(today), -7)) }[when] || null;
+  var showAhead = when !== 'past', showPast = when !== 'ahead';
   var ahead = !showAhead || kind === 'diff' || kind === 'unmatched' || kind === 'history' ? [] : f.upcoming.filter(function (u) {
-    if (until && u.date > until) return false;
     if (item && u.name !== item) return false;
     if (kind === 'out' && u.amount >= 0 || kind === 'in' && u.amount <= 0) return false;
     if (kind === 'overdue' && u.state !== 'overdue' || kind === 'estimate' && u.source !== 'estimate' || kind === 'bill' && u.source !== 'bill') return false;
